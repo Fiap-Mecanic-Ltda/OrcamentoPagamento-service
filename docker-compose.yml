@@ -1,0 +1,81 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: orcamento-sqlserver
+    environment:
+      SA_PASSWORD: ${SA_PASSWORD}
+      ACCEPT_EULA: "Y"
+    ports:
+      # 1434 no host para não brigar com o SQL Server do monólito (1433), que roda em
+      # paralelo durante o desenvolvimento.
+      - "1434:1433"
+    volumes:
+      - orcamento_sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P ${SA_PASSWORD} -Q 'SELECT 1' -No"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      # A primeira subida cria tempdb/msdb do zero e pode demorar bem mais que o
+      # intervalo; sem start_period o Docker marcaria o serviço como unhealthy antes.
+      start_period: 60s
+
+  # SNS e SQS locais. Substitui a AWS no desenvolvimento, com os mesmos SDKs e a mesma
+  # configuração de ARN/URL que a aplicação usa em produção.
+  localstack:
+    image: localstack/localstack:3
+    container_name: orcamento-localstack
+    environment:
+      SERVICES: sns,sqs
+      DEBUG: "0"
+      AWS_DEFAULT_REGION: us-east-1
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./scripts/localstack:/etc/localstack/init/ready.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "awslocal sqs list-queues >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  orcamento-api:
+    build:
+      context: .
+      dockerfile: src/OrcamentoPagamento.API/Dockerfile
+    container_name: orcamento-api
+    ports:
+      - "8081:8080"
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=MechanicOrcamentoDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JwtSettings__Issuer=MechanicLtda.API
+      - JwtSettings__IssuerCpf=MechanicLtda.Auth.Cpf
+      - JwtSettings__Audience=MechanicLtda.Clients
+      # Mensageria apontada para o LocalStack. Os nomes/ARNs são os criados pelo script
+      # em scripts/localstack.
+      - Messaging__Habilitado=true
+      - Messaging__Regiao=us-east-1
+      - Messaging__ServiceUrl=http://localstack:4566
+      - Messaging__TopicoEventosArn=arn:aws:sns:us-east-1:000000000000:orcamento-eventos
+      - Messaging__FilaItensAlteradosUrl=http://localstack:4566/000000000000/ordem-servico-itens-alterados
+      # O SDK exige credenciais mesmo contra o LocalStack, que aceita qualquer valor.
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+      - AWS_DEFAULT_REGION=us-east-1
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      localstack:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+
+volumes:
+  orcamento_sqlserver_data:

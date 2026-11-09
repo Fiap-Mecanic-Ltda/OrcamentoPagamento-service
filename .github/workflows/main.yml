@@ -1,0 +1,143 @@
+name: Esteira de CI/CD - Orcamento e Pagamento (microsservico)
+
+# Mesmo contrato dos outros repositorios de aplicacao do projeto: aqui rodam build,
+# testes e a publicacao da imagem no ECR. A infraestrutura (ECR, SNS/SQS, banco) e os
+# manifestos do Kubernetes vivem nos repositorios de infra:
+#   - Fiap-Mecanic-Ltda/InfraKubernete  (VPC, EC2/k3s, ECR, IAM/OIDC + k8s/)
+#   - Fiap-Mecanic-Ltda/InfraSGBD       (RDS; o banco deste servico e separado)
+# O deploy no cluster e feito la (workflow "Deploy no Kubernetes").
+#
+# - PR e push em desenvolvimento, homologacao e main: build e testes.
+# - push em main: publica a imagem no ECR e dispara o deploy no cluster.
+on:
+  push:
+    branches: [main, desenvolvimento, homologacao]
+  pull_request:
+    branches: [main, desenvolvimento, homologacao]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: "9.0.x"
+  # Precisam bater com os defaults de infra/variables.tf do repositorio
+  # InfraKubernete (aws_region, project_name, environment).
+  AWS_REGION: us-east-1
+  PROJECT_NAME: mechanicltda
+  ENVIRONMENT: prod
+  # Repositorio ECR deste microsservico, criado no InfraKubernete.
+  ECR_REPOSITORY: mechanicltda-orcamento
+
+permissions:
+  contents: read
+  # Necessario para o OIDC do GitHub assumir a role da AWS (sem access keys
+  # estaticas como secret do repositorio).
+  id-token: write
+
+jobs:
+  # ── 1. Build + 2. Testes automatizados ───────────────────────────────────
+  build-and-test:
+    name: Build e testes
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore OrcamentoPagamento.sln
+
+      - name: Build
+        run: dotnet build OrcamentoPagamento.sln --configuration Release --no-restore
+
+      - name: Testes automatizados
+        run: dotnet test OrcamentoPagamento.sln --configuration Release --no-build --verbosity normal
+
+  # Confirma se a role de OIDC (provisionada pelo Terraform no repositorio de
+  # infra) ja existe antes de tentar autenticar. Sem isso, um push antes do
+  # primeiro apply falharia com erro de credencial em vez de pular o job com
+  # uma mensagem clara.
+  check-infra-ready:
+    name: Verifica se a role de OIDC ja foi provisionada
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - name: Configura credenciais AWS (chave estatica do terraform-deployer)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Checa a role do GitHub Actions
+        id: check
+        run: |
+          ROLE_NAME="${PROJECT_NAME}-${ENVIRONMENT}-github-actions"
+          if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::Role '$ROLE_NAME' ainda nao existe - rode o workflow terraform.yml (apply) no repositorio InfraKubernete primeiro. Pulando o build/push da imagem."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── 3. Build e push da imagem no ECR ─────────────────────────────────────
+  docker-build-push:
+    name: Build e push da imagem no ECR
+    needs: [build-and-test, check-infra-ready]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.check-infra-ready.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configura credenciais AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login no ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Setup Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build e push da imagem do microsservico
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/OrcamentoPagamento.API/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ github.sha }}
+            ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # O deploy roda no repositorio de infra. O GITHUB_TOKEN deste workflow nao
+      # dispara workflows em outro repositorio, entao o disparo usa um token
+      # dedicado (fine-grained, so o InfraKubernete, permissao Contents:
+      # read/write). Sem ele configurado, fica o aviso para rodar na mao.
+      - name: Dispara o deploy no cluster
+        env:
+          INFRA_DISPATCH_TOKEN: ${{ secrets.INFRA_DISPATCH_TOKEN }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          if [ -z "$INFRA_DISPATCH_TOKEN" ]; then
+            echo "::notice::Imagem publicada com a tag $IMAGE_TAG. Sem INFRA_DISPATCH_TOKEN, rode o workflow 'Deploy no Kubernetes' em https://github.com/Fiap-Mecanic-Ltda/InfraKubernete/actions"
+            exit 0
+          fi
+
+          curl -sS --fail-with-body -X POST \
+            -H "Authorization: Bearer $INFRA_DISPATCH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/Fiap-Mecanic-Ltda/InfraKubernete/dispatches" \
+            -d "{\"event_type\":\"imagem-publicada\",\"client_payload\":{\"servico\":\"orcamento\",\"image_tag\":\"$IMAGE_TAG\"}}"
+
+          echo "::notice::Deploy da tag $IMAGE_TAG disparado em Fiap-Mecanic-Ltda/InfraKubernete."

@@ -1,0 +1,317 @@
+{
+  "info": {
+    "name": "MechanicLtda - Orcamento (microsservico)",
+    "description": "Fluxo completo do microsservico de orcamento: login no monolito para obter o token, recalculo a partir do payload do evento, consulta, ajuste manual, PDF e remocao. Rode as requisicoes na ordem: a de recalculo guarda o id do orcamento na variavel orcamentoId.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "orcamentoBaseUrl",
+      "value": "http://localhost:8081",
+      "description": "URL do microsservico. Em producao, a base do API Gateway."
+    },
+    {
+      "key": "authBaseUrl",
+      "value": "http://localhost:8080",
+      "description": "URL da API do monolito, que emite o token."
+    },
+    { "key": "email", "value": "admin@mechanic.com" },
+    { "key": "senha", "value": "Admin@123" },
+    { "key": "token", "value": "" },
+    { "key": "ordemServicoId", "value": "12" },
+    { "key": "orcamentoId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0. Health",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{orcamentoBaseUrl}}/health", "host": ["{{orcamentoBaseUrl}}"], "path": ["health"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('servico respondendo', () => pm.response.to.have.status(200));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Login no monolito (obtem o token)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"senha\": \"{{senha}}\"\n}"
+        },
+        "url": { "raw": "{{authBaseUrl}}/api/auth/login", "host": ["{{authBaseUrl}}"], "path": ["api", "auth", "login"] }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('login ok', () => pm.response.to.have.status(200));",
+              "const body = pm.response.json();",
+              "const token = body.getResponse?.token || body.token || body.getResponse;",
+              "if (token) { pm.collectionVariables.set('token', token); }"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Consulta sem token (espera 401)",
+      "request": {
+        "method": "GET",
+        "url": {
+          "raw": "{{orcamentoBaseUrl}}/api/orcamento/ordem-servico/{{ordemServicoId}}",
+          "host": ["{{orcamentoBaseUrl}}"],
+          "path": ["api", "orcamento", "ordem-servico", "{{ordemServicoId}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('rota protegida', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Recalcular (payload do evento)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventoId\": \"{{$guid}}\",\n  \"tipoEvento\": \"ordem-servico.itens-alterados\",\n  \"ocorridoEm\": \"{{$isoTimestamp}}\",\n  \"correlationId\": \"postman-{{$randomUUID}}\",\n  \"ordemServicoId\": {{ordemServicoId}},\n  \"ordemServico\": {\n    \"descricaoProblema\": \"Revisao dos 20 mil km\",\n    \"status\": \"EmDiagnostico\",\n    \"clienteNome\": \"Carlos Oliveira\",\n    \"clienteEmail\": \"carlos@email.com\",\n    \"clienteTelefone\": \"11999990001\",\n    \"veiculoMarca\": \"Toyota\",\n    \"veiculoModelo\": \"Corolla\",\n    \"veiculoPlaca\": \"ABC1D23\",\n    \"veiculoAno\": 2021\n  },\n  \"itens\": [\n    { \"itemId\": 41, \"descricao\": \"Pastilha de freio\", \"categoria\": 1, \"quantidade\": 2, \"valorUnitario\": 100.00 },\n    { \"itemId\": 42, \"descricao\": \"Oleo 5W30\", \"categoria\": 2, \"quantidade\": 2, \"valorUnitario\": 50.00 },\n    { \"itemId\": 43, \"descricao\": \"Mao de obra\", \"categoria\": 3, \"quantidade\": 1, \"valorUnitario\": 150.00 }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{orcamentoBaseUrl}}/api/orcamento/recalcular",
+          "host": ["{{orcamentoBaseUrl}}"],
+          "path": ["api", "orcamento", "recalcular"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('recalculo aceito', () => pm.expect([200, 204]).to.include(pm.response.code));",
+              "if (pm.response.code === 200) {",
+              "  const o = pm.response.json().getResponse;",
+              "  pm.collectionVariables.set('orcamentoId', o.id);",
+              "  pm.test('totais por categoria', () => {",
+              "    pm.expect(o.valorTotalPecas).to.eql(200);",
+              "    pm.expect(o.valorTotalInsumos).to.eql(100);",
+              "    pm.expect(o.valorTotalServicos).to.eql(150);",
+              "    pm.expect(o.valorTotalGeral).to.eql(450);",
+              "  });",
+              "  pm.test('itens gravados', () => pm.expect(o.itens).to.have.lengthOf(3));",
+              "}"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Recalcular de novo com o mesmo evento (espera 204)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"eventoId\": \"11111111-1111-1111-1111-111111111111\",\n  \"tipoEvento\": \"ordem-servico.itens-alterados\",\n  \"ocorridoEm\": \"2020-01-01T00:00:00Z\",\n  \"ordemServicoId\": {{ordemServicoId}},\n  \"itens\": [\n    { \"itemId\": 99, \"descricao\": \"Item de evento atrasado\", \"categoria\": 1, \"quantidade\": 1, \"valorUnitario\": 9999.00 }\n  ]\n}"
+        },
+        "url": {
+          "raw": "{{orcamentoBaseUrl}}/api/orcamento/recalcular",
+          "host": ["{{orcamentoBaseUrl}}"],
+          "path": ["api", "orcamento", "recalcular"]
+        },
+        "description": "Evento com ocorridoEm antigo. A idempotencia descarta e responde 204, sem sobrescrever o calculo mais novo."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('evento atrasado descartado', () => pm.response.to.have.status(204));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Obter por Ordem de Servico",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{orcamentoBaseUrl}}/api/orcamento/ordem-servico/{{ordemServicoId}}",
+          "host": ["{{orcamentoBaseUrl}}"],
+          "path": ["api", "orcamento", "ordem-servico", "{{ordemServicoId}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('encontrado', () => pm.response.to.have.status(200));",
+              "pm.test('valor nao foi sobrescrito pelo evento atrasado', () => {",
+              "  pm.expect(pm.response.json().getResponse.valorTotalGeral).to.eql(450);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Obter por Id",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{orcamentoBaseUrl}}/api/orcamento/{{orcamentoId}}",
+          "host": ["{{orcamentoBaseUrl}}"],
+          "path": ["api", "orcamento", "{{orcamentoId}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('encontrado', () => pm.response.to.have.status(200));"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Ajuste manual",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"valorTotalPecas\": 300.00,\n  \"valorTotalInsumos\": 120.00,\n  \"valorTotalServicos\": 80.00,\n  \"validade\": \"2026-12-31T00:00:00Z\"\n}"
+        },
+        "url": {
+          "raw": "{{orcamentoBaseUrl}}/api/orcamento/{{orcamentoId}}",
+          "host": ["{{orcamentoBaseUrl}}"],
+          "path": ["api", "orcamento", "{{orcamentoId}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('ajuste aceito', () => pm.response.to.have.status(200));",
+              "const o = pm.response.json().getResponse;",
+              "pm.test('total geral e a soma das categorias', () => pm.expect(o.valorTotalGeral).to.eql(500));",
+              "pm.test('marcado como ajustado', () => pm.expect(o.ajustadoManualmente).to.be.true);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Ajuste manual com valor negativo (espera 400)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{token}}" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"valorTotalPecas\": -10.00,\n  \"valorTotalInsumos\": 0,\n  \"valorTotalServicos\": 0\n}"
+        },
+        "url": {
+          "raw": "{{orcamentoBaseUrl}}/api/orcamento/{{orcamentoId}}",
+          "host": ["{{orcamentoBaseUrl}}"],
+          "path": ["api", "orcamento", "{{orcamentoId}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('valor negativo recusado', () => pm.response.to.have.status(400));"]
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Exportar PDF",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{orcamentoBaseUrl}}/api/orcamento/{{orcamentoId}}/pdf",
+          "host": ["{{orcamentoBaseUrl}}"],
+          "path": ["api", "orcamento", "{{orcamentoId}}", "pdf"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('pdf gerado', () => pm.response.to.have.status(200));",
+              "pm.test('content-type de pdf', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('application/pdf'));"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "10. Remover",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+        "url": {
+          "raw": "{{orcamentoBaseUrl}}/api/orcamento/{{orcamentoId}}",
+          "host": ["{{orcamentoBaseUrl}}"],
+          "path": ["api", "orcamento", "{{orcamentoId}}"]
+        }
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": ["pm.test('removido', () => pm.response.to.have.status(200));"]
+          }
+        }
+      ]
+    }
+  ]
+}

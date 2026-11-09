@@ -1,0 +1,29 @@
+# Build
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+*.userprefs
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.sln.docstates
+
+# Testes e cobertura
+coverage-output/
+coverage-report/
+TestResults/
+*.coverage
+*.coverlet.json
+
+# Segredos e ambiente
+.env
+*.env.local
+appsettings.Local.json
+
+# SO
+Thumbs.db
+.DS_Store
