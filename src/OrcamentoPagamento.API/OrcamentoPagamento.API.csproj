@@ -6,6 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <NoWarn>$(NoWarn);1591</NoWarn>
+    <!-- Program.cs chama AddUserSecrets<Program>() em Development, e esse overload lanca
+         InvalidOperationException se o assembly nao tiver o UserSecretsIdAttribute. Sem
+         isto, `dotnet run` e `docker compose up` (os dois rodam como Development) quebram
+         no startup. Tambem e o que habilita `dotnet user-secrets set` para o access token
+         do Mercado Pago ficar fora do repositorio. -->
+    <UserSecretsId>a1e7c4b2-8d3f-4a56-9b21-6c8e5f0d7a93</UserSecretsId>
     <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
     <DockerfileContext>.</DockerfileContext>
   </PropertyGroup>

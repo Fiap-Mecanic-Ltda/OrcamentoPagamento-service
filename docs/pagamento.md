@@ -2,8 +2,10 @@
 
 - **Status:** **implementado e testado** (102 testes na solução, 53 deles de pagamento)
 - **Data:** 2026-11-06
-- **Modo:** apenas credenciais e contas de teste. **Sem movimentação de dinheiro real.**
-- **Integração escolhida:** Checkout API (Checkout Transparente) — `POST /v1/payments`
+- **Modo:** apenas credenciais de teste. **Sem movimentação de dinheiro real.**
+- **Integração escolhida:** Checkout Transparente **via Payments API** — `POST /v1/payments`
+- **Dívida técnica conhecida:** para integração nova, o Mercado Pago recomenda a **Orders
+  API**. Ficamos na Payments de propósito — ver [§ 10](#10-dívida-técnica-payments-api-vs-orders-api)
 
 Este documento define as APIs e as chamadas do microsserviço para o fluxo de pagamento. O
 pagamento fica **no mesmo serviço do orçamento**, como módulo separado: agregado próprio,
@@ -265,14 +267,20 @@ Credenciais de teste são **separadas** das de produção, e vêm no painel do d
 *Detalhes da aplicação > Credenciais*. Com elas, nada é cobrado de verdade e as notificações
 chegam com `live_mode: false`.
 
-### Contas de teste
+### Contas de teste: não são necessárias aqui
 
-Precisamos de **duas**, do mesmo país: uma de **vendedor** (recebe) e uma de **comprador**
-(paga). Uma é criada automaticamente por aplicação, e dá para ter até **15**. Cada conta vem
-com User ID, usuário, senha e um código de verificação de 6 dígitos.
+A página de compra de teste do Checkout API pede exatamente três coisas — credenciais de
+teste da aplicação, um cartão de teste, e um e-mail de pagador **diferente do e-mail da sua
+conta** Mercado Pago. **Conta de teste não é pré-requisito**, e as credenciais de teste saem
+da própria conta de produção.
 
-Logado numa conta de teste não se acessa gestão de credenciais nem as ferramentas de
-qualidade — só o necessário para testar.
+Faz sentido criar conta de teste quando o fluxo exigir que alguém **faça login** no Mercado
+Pago — Checkout Pro, carteira, saldo em conta — ou para inspecionar o lado do vendedor sem
+usar a conta real. Nenhum dos dois entra neste serviço: o pagador é identificado só por
+e-mail e CPF, e o cartão é tokenizado no front-end.
+
+Se um dia forem criadas: são duas, do mesmo país (vendedor e comprador), uma por aplicação
+já vem criada, e o limite é 15.
 
 ### Cartões de teste
 
@@ -321,16 +329,28 @@ e muda depois), e `FUND`/`SECU`/`CALL` cobrem recusa com `status_detail` diferen
 
 ## 6. Configuração
 
-| Chave | Uso |
-|---|---|
-| `Pagamentos:Habilitado` | `false` usa gateway fake, sem tocar no Mercado Pago. Padrão em dev e nos testes |
-| `Pagamentos:MercadoPago:AccessToken` | Access token **de teste**. Via env `MERCADOPAGO_ACCESS_TOKEN` / SSM. Nunca em `appsettings` |
-| `Pagamentos:MercadoPago:WebhookSecret` | Secret da validação de `x-signature` |
-| `Pagamentos:MercadoPago:BaseUrl` | Padrão `https://api.mercadopago.com` |
-| `Pagamentos:MercadoPago:NotificationUrl` | URL pública do webhook, registrada no painel |
+| Chave | Variável no `.env` | Uso |
+|---|---|---|
+| `Pagamentos:Habilitado` | `PAGAMENTOS_HABILITADO` | `false` usa gateway fake, sem tocar no Mercado Pago. Padrão em dev e nos testes |
+| `Pagamentos:MercadoPago:AccessToken` | `MERCADOPAGO_ACCESS_TOKEN` | Access token **de teste**. Nunca em `appsettings` |
+| `Pagamentos:MercadoPago:WebhookSecret` | `MERCADOPAGO_WEBHOOK_SECRET` | Secret da validação de `x-signature`. Vazio = aceita sem validar e avisa no log |
+| `Pagamentos:MercadoPago:NotificationUrl` | `MERCADOPAGO_NOTIFICATION_URL` | URL pública do webhook, registrada no painel |
+| `Pagamentos:MercadoPago:BaseUrl` | — | Padrão `https://api.mercadopago.com` |
 
-Segredos seguem o caminho que já existe para o `JWT_SECRET_KEY`: SSM Parameter Store
-(`SecureString`) → Secret do Kubernetes.
+O `docker-compose.yml` mapeia cada variável do `.env` para a chave aninhada
+(`Pagamentos__MercadoPago__AccessToken`, com duplo underscore). Os defaults mantêm o modo
+fake, então **subir o compose sem `.env` funciona e não fala com o Mercado Pago** —
+alternar para o provedor real é editar o `.env`, sem tocar em código.
+
+Para `dotnet run` local, o token vai em User Secrets em vez do `.env`:
+
+```bash
+dotnet user-secrets set "Pagamentos:MercadoPago:AccessToken" "TEST-..." \
+  --project src/OrcamentoPagamento.API
+```
+
+Em produção, os segredos seguem o caminho que já existe para o `JWT_SECRET_KEY`: SSM
+Parameter Store (`SecureString`) → Secret do Kubernetes.
 
 ## 7. Como isso se encaixa na arquitetura atual
 
@@ -402,6 +422,7 @@ que estão rastreadas em [alinhamento-e-discovery.md](alinhamento-e-discovery.md
 |---|---|---|
 | 6 | **Pagamento parcial.** O modelo permite N pagamentos por orçamento (histórico de tentativas), com "um aprovado por orçamento" proposto como `409` | Confirmar se vale pagamento em partes. A cobrança complementar acima pode forçar isso |
 | 7 | **Pix.** O modelo já suporta (`MetodoPagamento`, status `Pendente`), mas é `POST /v1/payments` com `payment_method_id: "pix"` e sem token de cartão | Fluxo diferente no Web; fora do escopo deste primeiro teste |
+| 8 | **Migrar para a Orders API.** É a recomendada para integração nova | Decidido ficar na Payments por ora. Detalhes, custo e gatilho em [§ 10](#10-dívida-técnica-payments-api-vs-orders-api) |
 
 Nada disso bloqueia a implementação. O módulo pode ser construído e testado exatamente como
 está especificado: o pagamento é disparado explicitamente pelo Web, e o serviço publica o
@@ -413,8 +434,64 @@ resultado sem saber quem escuta.
 |---|---|
 | [Fazer compra de teste](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-payments/integration-test/make-test-purchase) | Fluxo de teste com credenciais de teste |
 | [Cartões de teste](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-payments/additional-content/your-integrations/test/cards) | Cartões e nomes que forçam cada resultado |
-| [Contas de teste](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-payments/additional-content/your-integrations/test/accounts) | Vendedor e comprador de teste |
+| [Contas de teste](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-payments/additional-content/your-integrations/test/accounts) | Quando contas de teste sao uteis (nao e o caso deste fluxo) |
 | [Integração via Métodos Core](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-payments/integration-configuration/card/integrate-via-core-methods) | `POST /v1/payments` e `createCardToken` |
 | [Webhooks](https://www.mercadopago.com.br/developers/pt/docs/your-integrations/notifications/webhooks) | Corpo da notificação, 22s, retry e `x-signature` |
 | [Coleção Postman](https://documenter.getpostman.com/view/15366798/2sAXjKasp4) | Requisições da API do Mercado Pago |
+| [Visão geral do Checkout Transparente](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-payments/overview) | Onde está a recomendação de usar Orders em integração nova |
+| [Migrar Payments → Orders](https://www.mercadopago.com.br/developers/pt/docs/checkout-api-orders/resources/migrate-payments-to-orders) | Diferenças de contrato e bloqueios da migração |
 | [ADR-002](adr/ADR-002-contrato-de-eventos.md) | O padrão de idempotência que a máquina de estados reaproveita |
+
+## 10. Dívida técnica: Payments API vs Orders API
+
+O Mercado Pago tem duas variantes do Checkout Transparente, e a página de visão geral é
+explícita sobre a preferência:
+
+> *"Se você está começando uma nova integração, recomendamos utilizar a API de Orders."*
+
+Sobre a Payments, a mesma página: *"essa API não receberá novas funcionalidades, apenas
+correções de segurança e estabilidade."* A página de migração reforça que o Mercado Pago
+**não desativou** a Payments — ela não está depreciada, está em manutenção.
+
+**Este serviço implementa a Payments API** (`POST /v1/payments`). Registro honesto de como
+chegamos aqui: foi implementada sem que a existência da variante Orders fosse considerada.
+Ao descobrir, a decisão consciente foi **manter a Payments por ora**, porque o fluxo já está
+implementado e verificado ponta a ponta, e a API segue funcional e sem data de desligamento.
+
+### O que custa migrar
+
+A porta `IGatewayPagamento` **não muda**. É o retorno concreto de ter o provedor atrás de um
+adapter:
+
+| Onde | Mudança |
+|---|---|
+| `MercadoPagoGateway.CriarAsync` | `POST /v1/orders`. Corpo reestruturado: `type: "online"`, `processing_mode`, `total_amount` como **string**, e `transaction_amount`/`token`/`installments`/`payment_method_id` migram para `transactions.payments[]` com os campos de método aninhados em `payment_method` |
+| idem, captura | O booleano `capture` vira `capture_mode` na raiz (`manual`, `automatic`, `automatic_async`) |
+| `MercadoPagoGateway.ObterAsync` | `GET /v1/orders/{id}` |
+| `MapearStatus` | Atenção: Orders usa `canceled` (um L), Payments usa `cancelled` |
+| `WebhookMercadoPagoController` | Hoje filtra `type == "payment"`; provavelmente passa a ser o recurso `order` |
+| `MERCADOPAGO_NOTIFICATION_URL` | Na Orders a `notification_url` sai do corpo e é configurada no painel |
+
+**Não mudam:** `Domain`, `Application`, controllers de pagamento, máquina de estados,
+`GatewayPagamentoFake` e os 102 testes — exceto o mapa de status e o filtro do webhook.
+
+### Bloqueios declarados pela documentação
+
+Nenhum dos dois nos afeta hoje, mas valem conferência antes de migrar:
+
+- **Débito.** A Orders cobre apenas Elo e débito virtual Caixa; a Payments aceita débito de
+  todas as bandeiras. A doc orienta manter na Payments o fluxo que depender de outras.
+- **Marketplace / split 1:1.** A Orders não tem equivalente documentado de
+  `application_fee`. A doc trata isso como **bloqueio**. Não usamos split.
+
+### Gatilho para revisitar
+
+Migrar deixa de ser opcional se qualquer um destes acontecer:
+
+1. Precisarmos de **3DS 2.0**, captura em duas etapas, ou múltiplas transações por cobrança.
+2. O Mercado Pago anunciar data de desligamento da Payments.
+3. O módulo de pagamento precisar de alguma funcionalidade nova do provedor — por definição,
+   elas só chegam na Orders.
+
+Antes de implementar, ler a referência da Orders campo a campo. O que está nesta seção veio
+da página de migração, não da referência completa.

@@ -1,7 +1,7 @@
 # Alinhamento entre times e discovery
 
 - **Documento vivo.** Atualizar conforme as decisões caem, não ao final.
-- **Última atualização:** 2026-11-06
+- **Última atualização:** 2026-11-13
 - **Dono deste documento:** time do microsserviço de Orçamento e Pagamento
 
 Três frentes estão sendo desenvolvidas em paralelo, e nenhuma delas pode esperar as outras.
@@ -167,9 +167,13 @@ Itens de alinhamento:
 
 - [ ] Confirmar que Web e microsserviço usam as credenciais de **teste** da **mesma** aplicação.
 - [ ] Definir quem é dono da aplicação no painel e quem distribui as credenciais.
-- [ ] Criar as duas contas de teste (vendedor e comprador) e combinar quem usa qual. Limite: 15.
-- [ ] O e-mail do `payer` tem de ser **diferente** do e-mail da conta vendedora, senão o
+- [ ] O e-mail do `payer` tem de ser **diferente** do e-mail da conta Mercado Pago, senão o
       pagamento falha por motivo que não parece ser esse.
+
+**Conta de teste não é pré-requisito** deste fluxo — as credenciais de teste saem da conta de
+produção, e ninguém faz login no Mercado Pago em Checkout API. Elas só entram se o fluxo
+mudar para Checkout Pro / carteira, ou se alguém quiser ver o lado do vendedor sem usar a
+conta real.
 
 ### 3.7 `notification_url` e ambientes
 
@@ -212,6 +216,7 @@ hoje e caras depois.
 | 2026-11-06 | Recálculo que altera o valor **cancela** pagamento pendente; `Aprovado` não é tocado | nosso time |
 | 2026-11-06 | O valor da cobrança vem do orçamento, **nunca** da requisição do Web | nosso time |
 | 2026-11-06 | Definição inicial: `AguardandoAprovacao` → `EmExecucao` após o pagamento — **registrada como pendente** até a externalização da OS se definir | Web / OS |
+| 2026-11-13 | Checkout Transparente **via Payments API**, sabendo que o Mercado Pago recomenda a Orders API para integração nova. Dívida registrada, com gatilho de revisão em [pagamento.md § 10](pagamento.md) | nosso time |
 
 ## 6. Próximo passo de cada frente
 

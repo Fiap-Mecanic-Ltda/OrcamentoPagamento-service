@@ -65,6 +65,13 @@ services:
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
       - AWS_DEFAULT_REGION=us-east-1
+      # Pagamento. Os defaults mantêm o gateway fake, então subir sem .env funciona e
+      # não toca no Mercado Pago. Trocar para o provedor real é editar o .env — o duplo
+      # underscore é como o .NET mapeia seção aninhada (Pagamentos:MercadoPago:...).
+      - Pagamentos__Habilitado=${PAGAMENTOS_HABILITADO:-false}
+      - Pagamentos__MercadoPago__AccessToken=${MERCADOPAGO_ACCESS_TOKEN:-}
+      - Pagamentos__MercadoPago__WebhookSecret=${MERCADOPAGO_WEBHOOK_SECRET:-}
+      - Pagamentos__MercadoPago__NotificationUrl=${MERCADOPAGO_NOTIFICATION_URL:-}
     depends_on:
       sqlserver:
         condition: service_healthy

@@ -8,12 +8,14 @@ consome os eventos de alteração de itens da Ordem de Serviço, calcula o orça
 **próprio banco** e expõe consulta, ajuste manual e exportação em PDF.
 
 O **pagamento** vive no mesmo serviço, como módulo separado, integrado ao **Mercado Pago**
-via Checkout API.
+via Checkout Transparente, na variante **Payments API** (`POST /v1/payments`) — com a
+dívida técnica de que a Orders API é a recomendada para integração nova, registrada em
+[docs/pagamento.md § 10](docs/pagamento.md).
 
 > **Estado atual:** orçamento e pagamento **implementados e testados** (102 testes). O
 > contrato das APIs de pagamento está em [docs/pagamento.md](docs/pagamento.md), que é o
-> que o time do Web usa para codar a chamada. A integração roda apenas com credenciais e
-> contas de teste, sem movimentação de dinheiro real.
+> que o time do Web usa para codar a chamada. A integração roda apenas com credenciais de
+> teste, sem movimentação de dinheiro real.
 
 ## Onde este serviço entra
 
@@ -242,6 +244,82 @@ Para parar, e para apagar também o volume do banco:
 docker compose down
 docker compose down -v
 ```
+
+### Testando o pagamento
+
+Dois modos, escolhidos por `PAGAMENTOS_HABILITADO` no `.env`. Nenhum arquivo de código muda
+entre eles.
+
+#### Modo fake — padrão, nada a configurar
+
+É o que vale sem `.env` e sem credencial nenhuma. O resultado é decidido pelo **token** que
+você envia, com os mesmos códigos de quatro letras que o Mercado Pago usa no nome do titular
+do cartão de teste:
+
+| `token` enviado | Resultado |
+|---|---|
+| `APRO` (ou qualquer outro) | `Aprovado` |
+| `CONT` | `Pendente` — e a consulta seguinte aprova, o que exercita webhook e máquina de estados |
+| `FUND` | `Recusado`, `cc_rejected_insufficient_amount` |
+| `SECU`, `CALL`, `EXPI`, `OTHE` | `Recusado`, com `status_detail` diferente em cada |
+
+```bash
+# 1. Orcamento de R$ 450 para a OS 12
+curl -X POST http://localhost:8081/api/orcamento/recalcular \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"eventoId":"'$(uuidgen)'","ocorridoEm":"2026-11-11T12:00:00Z","ordemServicoId":12,
+       "itens":[{"itemId":1,"descricao":"Pastilha","categoria":1,"quantidade":2,"valorUnitario":100},
+                {"itemId":2,"descricao":"Oleo","categoria":2,"quantidade":2,"valorUnitario":50},
+                {"itemId":3,"descricao":"Mao de obra","categoria":3,"quantidade":1,"valorUnitario":150}]}'
+
+# 2. Cobranca que nasce pendente. Repare que nao se manda valor: ele vem do orcamento.
+curl -X POST http://localhost:8081/api/pagamento \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"requisicaoId":"'$(uuidgen)'","orcamentoId":1,"token":"CONT","paymentMethodId":"master",
+       "installments":1,"payer":{"email":"comprador@testuser.com",
+       "identification":{"type":"CPF","number":"12345678909"}}}'
+
+# 3. Fecha o ciclo sem webhook: Pendente -> Aprovado
+curl -X POST http://localhost:8081/api/pagamento/1/sincronizar -H "Authorization: Bearer $TOKEN"
+```
+
+#### Modo Mercado Pago
+
+Ainda em teste, sem dinheiro real. No `.env`:
+
+```env
+PAGAMENTOS_HABILITADO=true
+MERCADOPAGO_ACCESS_TOKEN=TEST-...
+```
+
+Para `dotnet run` local, o token **não** vai no `.env` — vai em User Secrets, para não
+correr risco de ser commitado:
+
+```bash
+dotnet user-secrets set "Pagamentos:MercadoPago:AccessToken" "TEST-..." \
+  --project src/OrcamentoPagamento.API
+```
+
+O que é preciso obter antes, no painel do desenvolvedor:
+
+1. **Criar a aplicação.**
+2. **Copiar as credenciais de teste** (*Detalhes da aplicação > Credenciais*): o access
+   token fica com este serviço, a public key com o time do Web. **Têm de ser da mesma
+   aplicação** — token de cartão gerado pela public key de uma aplicação é rejeitado pelo
+   access token de outra.
+3. **Webhook secret e `notification_url`** só fazem sentido quando houver URL pública —
+   `localhost` não recebe notificação. Até então, `POST /api/pagamento/{id}/sincronizar`
+   faz o mesmo trabalho sob demanda.
+
+É só isso. **Não é preciso criar conta de teste** para este fluxo: as credenciais de teste
+saem da sua própria conta de produção, e o pagador é identificado só por e-mail e CPF — o
+único requisito é que o `payer.email` seja **diferente do e-mail da sua conta** Mercado Pago.
+Conta de teste serve para simular quem faz *login* no Mercado Pago (Checkout Pro, carteira,
+saldo em conta) ou para olhar o lado do vendedor sem usar a conta real; nada disso entra
+aqui.
+
+Cartões de teste e os códigos que forçam cada resultado estão em
+[docs/pagamento.md § 5](docs/pagamento.md).
 
 ## Testes
 
