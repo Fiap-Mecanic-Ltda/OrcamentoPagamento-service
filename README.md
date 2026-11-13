@@ -191,19 +191,39 @@ $env:JWT_SECRET_KEY = "sua-chave-jwt-secreta-com-no-minimo-32-caracteres"
 Com `Messaging:Habilitado = false` (padrão), o serviço sobe sem tocar na AWS e só responde
 pelo REST. As migrations são aplicadas automaticamente na subida.
 
-### Com Docker Compose (SQL Server + LocalStack)
+### Com Docker Compose (LocalStack + banco do InfraSGBD)
+
+A infraestrutura fica em repositórios próprios:
+
+| Repositório | Conteúdo |
+|---|---|
+| [OrcamentoPagamento-InfraSGBD](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraSGBD) | SQL Server local (e, depois, o RDS via Terraform) |
+| [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete) | Manifestos Kubernetes (kustomize) e cluster k3s local |
+
+O banco sobe primeiro, no InfraSGBD, porque é ele que cria a rede `orcamento-net` usada
+pela API. Use o **mesmo `SA_PASSWORD`** nos dois `.env`:
 
 ```bash
+# 1. Banco (repositório OrcamentoPagamento-InfraSGBD)
+cd ../OrcamentoPagamento-InfraSGBD
+cp .env.example .env   # ajuste SA_PASSWORD
+docker compose up -d
+
+# 2. Este serviço
+cd ../OrcamentoPagamento-service
 cp .env.example .env   # ajuste SA_PASSWORD e JWT_SECRET_KEY
 docker compose up --build
 ```
 
 Isso sobe:
 
-1. **SQL Server 2022** na porta `1434` do host — `1433` fica livre para o banco do monólito.
+1. **SQL Server 2022** na porta `1434` do host, pelo InfraSGBD. A `1433` fica livre para o
+   banco do monólito.
 2. **LocalStack** (SNS + SQS) na `4566`, já com tópicos, fila e DLQ criados por
    `scripts/localstack/01-criar-topico-e-fila.sh`.
 3. **O microsserviço** na `8081`, com a mensageria ligada apontando para o LocalStack.
+
+Para subir no Kubernetes local, veja o README do InfraKubernete.
 
 Publicar um evento de teste:
 
@@ -238,11 +258,11 @@ docker exec orcamento-localstack awslocal sqs receive-message \
   --queue-url http://localhost:4566/000000000000/ordem-servico-itens-alterados-dlq
 ```
 
-Para parar, e para apagar também o volume do banco:
+Para parar o serviço. O banco continua de pé no InfraSGBD; para zerá-lo, rode
+`docker compose down -v` lá:
 
 ```bash
 docker compose down
-docker compose down -v
 ```
 
 ### Testando o pagamento

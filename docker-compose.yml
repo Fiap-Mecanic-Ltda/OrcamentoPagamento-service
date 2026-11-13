@@ -1,25 +1,10 @@
+# O banco NÃO sobe aqui: ele vive no repositório OrcamentoPagamento-InfraSGBD, que cria
+# o container orcamento-sqlserver e a rede orcamento-net. Suba ele primeiro:
+#
+#   cd ../OrcamentoPagamento-InfraSGBD && docker compose up -d
+#
+# Os manifestos Kubernetes ficam no OrcamentoPagamento-InfraKubernete.
 services:
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: orcamento-sqlserver
-    environment:
-      SA_PASSWORD: ${SA_PASSWORD}
-      ACCEPT_EULA: "Y"
-    ports:
-      # 1434 no host para não brigar com o SQL Server do monólito (1433), que roda em
-      # paralelo durante o desenvolvimento.
-      - "1434:1433"
-    volumes:
-      - orcamento_sqlserver_data:/var/opt/mssql
-    healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P ${SA_PASSWORD} -Q 'SELECT 1' -No"]
-      interval: 10s
-      timeout: 5s
-      retries: 30
-      # A primeira subida cria tempdb/msdb do zero e pode demorar bem mais que o
-      # intervalo; sem start_period o Docker marcaria o serviço como unhealthy antes.
-      start_period: 60s
-
   # SNS e SQS locais. Substitui a AWS no desenvolvimento, com os mesmos SDKs e a mesma
   # configuração de ARN/URL que a aplicação usa em produção.
   localstack:
@@ -49,7 +34,8 @@ services:
       - "8081:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
-      - ConnectionStrings__DefaultConnection=Server=sqlserver;Database=MechanicOrcamentoDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+      # orcamento-sqlserver é o container do InfraSGBD, alcançado pela rede orcamento-net.
+      - ConnectionStrings__DefaultConnection=Server=orcamento-sqlserver;Database=MechanicOrcamentoDb;User Id=sa;Password=${SA_PASSWORD:?Defina SA_PASSWORD no .env - o mesmo do InfraSGBD};TrustServerCertificate=True;
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - JwtSettings__Issuer=MechanicLtda.API
       - JwtSettings__IssuerCpf=MechanicLtda.Auth.Cpf
@@ -72,9 +58,10 @@ services:
       - Pagamentos__MercadoPago__AccessToken=${MERCADOPAGO_ACCESS_TOKEN:-}
       - Pagamentos__MercadoPago__WebhookSecret=${MERCADOPAGO_WEBHOOK_SECRET:-}
       - Pagamentos__MercadoPago__NotificationUrl=${MERCADOPAGO_NOTIFICATION_URL:-}
+    networks:
+      - default
+      - orcamento-net
     depends_on:
-      sqlserver:
-        condition: service_healthy
       localstack:
         condition: service_healthy
     healthcheck:
@@ -84,5 +71,9 @@ services:
       retries: 20
       start_period: 15s
 
-volumes:
-  orcamento_sqlserver_data:
+networks:
+  # Criada pelo docker-compose do OrcamentoPagamento-InfraSGBD. Se ela não existir, o
+  # compose falha com "network orcamento-net declared as external, but could not be
+  # found": suba o banco primeiro.
+  orcamento-net:
+    external: true

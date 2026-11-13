@@ -3,8 +3,9 @@ name: Esteira de CI/CD - Orcamento e Pagamento (microsservico)
 # Mesmo contrato dos outros repositorios de aplicacao do projeto: aqui rodam build,
 # testes e a publicacao da imagem no ECR. A infraestrutura (ECR, SNS/SQS, banco) e os
 # manifestos do Kubernetes vivem nos repositorios de infra:
-#   - Fiap-Mecanic-Ltda/InfraKubernete  (VPC, EC2/k3s, ECR, IAM/OIDC + k8s/)
-#   - Fiap-Mecanic-Ltda/InfraSGBD       (RDS; o banco deste servico e separado)
+#   - Fiap-Mecanic-Ltda/InfraKubernete  (VPC, EC2/k3s, ECR, IAM/OIDC do cluster compartilhado)
+#   - Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete  (manifestos k8s deste servico)
+#   - Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraSGBD       (banco deste servico)
 # O deploy no cluster e feito la (workflow "Deploy no Kubernetes").
 #
 # - PR e push em desenvolvimento, homologacao e main: build e testes.
