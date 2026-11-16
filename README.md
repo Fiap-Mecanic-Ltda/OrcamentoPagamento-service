@@ -197,8 +197,8 @@ A infraestrutura fica em repositórios próprios:
 
 | Repositório | Conteúdo |
 |---|---|
-| [OrcamentoPagamento-InfraSGBD](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraSGBD) | SQL Server local (e, depois, o RDS via Terraform) |
-| [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete) | Manifestos Kubernetes (kustomize) e cluster k3s local |
+| [OrcamentoPagamento-InfraSGBD](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraSGBD) | SQL Server local e Terraform do RDS (`terraform plan/apply`) |
+| [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete) | Terraform do ECR, SNS/SQS, ALB, IAM e SSM + manifestos `k8s/` e deploy no cluster |
 
 O banco sobe primeiro, no InfraSGBD, porque é ele que cria a rede `orcamento-net` usada
 pela API. Use o **mesmo `SA_PASSWORD`** nos dois `.env`:
@@ -378,9 +378,21 @@ dotnet ef migrations add NomeDaMigration \
 
 `.github/workflows/main.yml`, no mesmo contrato dos outros repositórios de aplicação:
 
-- PR e push em `desenvolvimento`, `homologacao` e `main`: build e testes.
+- PR e push em `desenvolvimento`, `homolog`, `homologacao` e `main`: build e testes.
 - push em `main`: publica a imagem no ECR (`mechanicltda-orcamento`, tags `latest` e SHA) e
-  dispara o workflow de deploy no [InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/InfraKubernete).
+  dispara o workflow de deploy no
+  [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete).
+
+| Repositório | Conteúdo | Pipeline |
+|---|---|---|
+| [InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/InfraKubernete) | Cluster compartilhado (VPC, EC2/k3s, ASG, ALB, IAM/OIDC) | `terraform plan/apply` |
+| [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete) | Terraform do serviço no cluster (ECR, SNS/SQS, ALB, IAM, SSM) + manifestos `k8s/` | `terraform plan/apply` e deploy no cluster |
+| [OrcamentoPagamento-InfraSGBD](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraSGBD) | Terraform do RDS SQL Server (instância, subnet group, SG, connection string no SSM) | `terraform plan/apply` |
+| **OrcamentoPagamento-service** (este repo) | Aplicação .NET 9 (`src/`, `tests/`, Dockerfile) | build, testes e push da imagem no ECR |
+
+Secrets: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (checagem da infra), `AWS_ROLE_ARN`
+(OIDC) e `INFRA_DISPATCH_TOKEN` (fine-grained, Contents: read/write no
+OrcamentoPagamento-InfraKubernete).
 
 Autenticação na AWS por **OIDC**, sem access keys estáticas.
 

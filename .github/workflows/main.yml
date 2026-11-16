@@ -3,29 +3,33 @@ name: Esteira de CI/CD - Orcamento e Pagamento (microsservico)
 # Mesmo contrato dos outros repositorios de aplicacao do projeto: aqui rodam build,
 # testes e a publicacao da imagem no ECR. A infraestrutura (ECR, SNS/SQS, banco) e os
 # manifestos do Kubernetes vivem nos repositorios de infra:
-#   - Fiap-Mecanic-Ltda/InfraKubernete  (VPC, EC2/k3s, ECR, IAM/OIDC do cluster compartilhado)
-#   - Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete  (manifestos k8s deste servico)
-#   - Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraSGBD       (banco deste servico)
-# O deploy no cluster e feito la (workflow "Deploy no Kubernetes").
+#   - Fiap-Mecanic-Ltda/InfraKubernete  (VPC, EC2/k3s, ALB, IAM/OIDC do cluster compartilhado)
+#   - Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete  (Terraform: ECR, SNS/SQS, regra
+#     no ALB, IAM, SSM + manifestos k8s e deploy deste servico)
+#   - Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraSGBD       (Terraform do RDS deste servico)
+# O deploy no cluster e feito no OrcamentoPagamento-InfraKubernete (workflow
+# "Deploy no Kubernetes (k3s) - Orcamento").
 #
-# - PR e push em desenvolvimento, homologacao e main: build e testes.
+# - PR e push em desenvolvimento, homolog, homologacao e main: build e testes.
 # - push em main: publica a imagem no ECR e dispara o deploy no cluster.
 on:
   push:
-    branches: [main, desenvolvimento, homologacao]
+    branches: [main, desenvolvimento, homolog, homologacao]
   pull_request:
-    branches: [main, desenvolvimento, homologacao]
+    branches: [main, desenvolvimento, homolog, homologacao]
   workflow_dispatch:
 
 env:
   DOTNET_VERSION: "9.0.x"
   # Precisam bater com os defaults de infra/variables.tf do repositorio
-  # InfraKubernete (aws_region, project_name, environment).
+  # OrcamentoPagamento-InfraKubernete (aws_region, project_name, environment).
   AWS_REGION: us-east-1
   PROJECT_NAME: mechanicltda
   ENVIRONMENT: prod
-  # Repositorio ECR deste microsservico, criado no InfraKubernete.
+  # Repositorio ECR deste microsservico, criado no OrcamentoPagamento-InfraKubernete.
   ECR_REPOSITORY: mechanicltda-orcamento
+  # Repositorio que recebe o repository_dispatch e faz o deploy.
+  INFRA_REPOSITORY: Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete
 
 permissions:
   contents: read
@@ -77,12 +81,17 @@ jobs:
       - name: Checa a role do GitHub Actions
         id: check
         run: |
+          # A role vem do InfraKubernete do monolito; o repositorio ECR, do
+          # OrcamentoPagamento-InfraKubernete. Os dois precisam estar aplicados.
           ROLE_NAME="${PROJECT_NAME}-${ENVIRONMENT}-github-actions"
-          if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "::warning::Role '$ROLE_NAME' ainda nao existe - rode o workflow terraform.yml (apply) no repositorio InfraKubernete primeiro. Pulando o build/push da imagem."
+          if ! aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
+            echo "::warning::Role '$ROLE_NAME' ainda nao existe - rode o terraform.yml (apply) no InfraKubernete primeiro. Pulando o build/push da imagem."
             echo "ready=false" >> "$GITHUB_OUTPUT"
+          elif ! aws ecr describe-repositories --repository-names "$ECR_REPOSITORY" >/dev/null 2>&1; then
+            echo "::warning::Repositorio ECR '$ECR_REPOSITORY' ainda nao existe - rode o terraform.yml (apply) no ${INFRA_REPOSITORY} primeiro. Pulando o build/push da imagem."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
           fi
 
   # ── 3. Build e push da imagem no ECR ─────────────────────────────────────
@@ -122,15 +131,15 @@ jobs:
 
       # O deploy roda no repositorio de infra. O GITHUB_TOKEN deste workflow nao
       # dispara workflows em outro repositorio, entao o disparo usa um token
-      # dedicado (fine-grained, so o InfraKubernete, permissao Contents:
-      # read/write). Sem ele configurado, fica o aviso para rodar na mao.
+      # dedicado (fine-grained, so o OrcamentoPagamento-InfraKubernete, permissao
+      # Contents: read/write). Sem ele configurado, fica o aviso para rodar na mao.
       - name: Dispara o deploy no cluster
         env:
           INFRA_DISPATCH_TOKEN: ${{ secrets.INFRA_DISPATCH_TOKEN }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
           if [ -z "$INFRA_DISPATCH_TOKEN" ]; then
-            echo "::notice::Imagem publicada com a tag $IMAGE_TAG. Sem INFRA_DISPATCH_TOKEN, rode o workflow 'Deploy no Kubernetes' em https://github.com/Fiap-Mecanic-Ltda/InfraKubernete/actions"
+            echo "::notice::Imagem publicada com a tag $IMAGE_TAG. Sem INFRA_DISPATCH_TOKEN, rode o workflow 'Deploy no Kubernetes (k3s) - Orcamento' em https://github.com/${INFRA_REPOSITORY}/actions"
             exit 0
           fi
 
@@ -138,7 +147,7 @@ jobs:
             -H "Authorization: Bearer $INFRA_DISPATCH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/Fiap-Mecanic-Ltda/InfraKubernete/dispatches" \
+            "https://api.github.com/repos/${INFRA_REPOSITORY}/dispatches" \
             -d "{\"event_type\":\"imagem-publicada\",\"client_payload\":{\"servico\":\"orcamento\",\"image_tag\":\"$IMAGE_TAG\"}}"
 
-          echo "::notice::Deploy da tag $IMAGE_TAG disparado em Fiap-Mecanic-Ltda/InfraKubernete."
+          echo "::notice::Deploy da tag $IMAGE_TAG disparado em ${INFRA_REPOSITORY}."
