@@ -44,12 +44,22 @@ Nas tabelas abaixo esses três campos ficam implícitos.
 | `estoqueId` | int? | Id no estoque da Execução, quando for peça ou insumo |
 | `servicoOficinaId` | int? | Id no catálogo de serviços da Execução, quando for serviço |
 
+**`VeiculoOrdemServico`** (só no `GerarOrcamento`, para exibição)
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `veiculoId` | int | Id do veículo no MechanicLtda |
+| `placa` | string? (até 10) | |
+| `marca` | string? (até 50) | |
+| `modelo` | string? (até 50) | |
+| `ano` | int? | |
+
 ## Comandos do OS Service
 
 | Mensagem | Para | Campos | Respostas esperadas |
 |---|---|---|---|
 | `IniciarDiagnostico` | Execução | `clienteId`, `veiculoId`, `descricaoProblema` | `DiagnosticoConcluido` ou `DiagnosticoFalhou` |
-| `GerarOrcamento` | Billing | `clienteId`, `nomeCliente`, `emailCliente`, `itens: ItemOrdemServico[]` | `OrcamentoGerado` ou `OrcamentoFalhou`; depois `PagamentoConfirmado` (aprovação paga) ou `OrcamentoRecusado` |
+| `GerarOrcamento` | Billing | `clienteId`, `nomeCliente`, `emailCliente`, `telefoneCliente?`, `descricaoProblema?`, `veiculo?: VeiculoOrdemServico`, `itens: ItemOrdemServico[]` | `OrcamentoGerado` ou `OrcamentoFalhou`; depois `PagamentoConfirmado` (aprovação paga) ou `OrcamentoRecusado` |
 | `IniciarExecucao` | Execução | `orcamentoId`, `itens: ItemOrdemServico[]` | `ExecucaoIniciada`, depois `ExecucaoFinalizada`; ou `ExecucaoFalhou` |
 | `CancelarOrcamento` | Billing | `orcamentoId`, `motivo` | `OrcamentoCancelado` |
 | `EstornarPagamento` | Billing | `pagamentoId`, `motivo` | `PagamentoEstornado` |
@@ -57,7 +67,12 @@ Nas tabelas abaixo esses três campos ficam implícitos.
 
 `nomeCliente` e `emailCliente` vão no `GerarOrcamento` porque o Billing envia o e-mail de
 aprovação e não deve consultar o banco de clientes. O OS Service obtém esses dados por REST na
-abertura da OS.
+abertura da Saga (OS indo para diagnóstico).
+
+`telefoneCliente`, `descricaoProblema` e `veiculo` são **opcionais** e servem só para o PDF do
+orçamento: o OS Service lê telefone e veículo no MechanicLtda junto com o cliente, e manda
+`veiculo: null` se o veículo não for encontrado. O Billing deve aceitar todos eles ausentes ou
+nulos; quem consome versões antigas da mensagem simplesmente os ignora.
 
 ## Regra do pagamento
 
@@ -151,6 +166,9 @@ Exchange `MechanicLtda.Contratos:GerarOrcamento`, cabeçalho `correlation-id: 3f
   "clienteId": 7,
   "nomeCliente": "Maria Souza",
   "emailCliente": "maria@exemplo.com",
+  "telefoneCliente": "11999990000",
+  "descricaoProblema": "Barulho no freio ao frear",
+  "veiculo": { "veiculoId": 12, "placa": "ABC1D23", "marca": "Volkswagen", "modelo": "Gol", "ano": 2019 },
   "itens": [
     { "descricao": "Pastilha de freio dianteira", "tipo": "Peca", "quantidade": 2, "valorUnitario": 89.90, "estoqueId": 15, "servicoOficinaId": null },
     { "descricao": "Troca de pastilhas", "tipo": "Servico", "quantidade": 1, "valorUnitario": 120.00, "estoqueId": null, "servicoOficinaId": 3 }

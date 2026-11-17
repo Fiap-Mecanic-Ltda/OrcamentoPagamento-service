@@ -64,8 +64,9 @@ evento e o OS Service não fala SNS, então a Saga ficava parada em `AguardandoO
 
 ## Consequências
 
-- O `GerarOrcamento` não traz veículo, telefone nem descrição do problema: o PDF de um
-  orçamento da Saga sai com esses campos em branco até o contrato ganhar campos opcionais.
+- Veículo, telefone e descrição do problema chegam como campos **opcionais** do
+  `GerarOrcamento` (`veiculo`, `telefoneCliente`, `descricaoProblema`) e vão para o
+  `OrdemServicoSnapshot` que alimenta o PDF. O que vier nulo aparece como "não informado".
 - `itens[].tipo` chega como texto (`Peca`, `Insumo`, `Servico`) e é convertido para
   `CategoriaItem`. A rota manual continua recebendo a categoria numérica.
 - O contrato diz que o Billing envia o e-mail de aprovação ao cliente. Este serviço ainda não

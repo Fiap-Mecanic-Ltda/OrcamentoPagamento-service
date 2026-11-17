@@ -72,6 +72,49 @@ namespace OrcamentoPagamento.Domain.Tests
         }
 
         [Fact]
+        public async Task GerarOrcamento_ComVeiculoETelefone_LevaOsDadosParaOSnapshotDoPdf()
+        {
+            CalcularOrcamentoCommand? recebido = null;
+            _orcamentoService
+                .Setup(s => s.CalcularAsync(It.IsAny<CalcularOrcamentoCommand>(), It.IsAny<CancellationToken>()))
+                .Callback((CalcularOrcamentoCommand c, CancellationToken _) => recebido = c)
+                .ReturnsAsync(new Orcamento { Id = 7, OrdemServicoId = Os, ValorTotalGeral = 299.80m });
+
+            await _service.TratarAsync(Comando() with
+            {
+                TelefoneCliente = "11999990000",
+                DescricaoProblema = "Barulho no freio",
+                Veiculo = new VeiculoOrdemServico { VeiculoId = 12, Placa = "ABC1D23", Marca = "Volkswagen", Modelo = "Gol", Ano = 2019 }
+            });
+
+            var dados = recebido!.OrdemServico!;
+            Assert.Equal("11999990000", dados.ClienteTelefone);
+            Assert.Equal("Barulho no freio", dados.DescricaoProblema);
+            Assert.Equal("ABC1D23", dados.VeiculoPlaca);
+            Assert.Equal("Volkswagen", dados.VeiculoMarca);
+            Assert.Equal("Gol", dados.VeiculoModelo);
+            Assert.Equal(2019, dados.VeiculoAno);
+        }
+
+        [Fact]
+        public async Task GerarOrcamento_SemOsCamposOpcionais_GeraMesmoAssim()
+        {
+            CalcularOrcamentoCommand? recebido = null;
+            _orcamentoService
+                .Setup(s => s.CalcularAsync(It.IsAny<CalcularOrcamentoCommand>(), It.IsAny<CancellationToken>()))
+                .Callback((CalcularOrcamentoCommand c, CancellationToken _) => recebido = c)
+                .ReturnsAsync(new Orcamento { Id = 7, OrdemServicoId = Os, ValorTotalGeral = 299.80m });
+
+            await _service.TratarAsync(Comando());
+
+            var dados = recebido!.OrdemServico!;
+            Assert.Null(dados.ClienteTelefone);
+            Assert.Null(dados.VeiculoPlaca);
+            Assert.Null(dados.VeiculoAno);
+            _publicador.Verify(p => p.PublicarAsync(It.IsAny<OrcamentoGerado>(), It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
         public async Task GerarOrcamento_RepetidoDaMesmaSaga_RepublicaSemRecalcular()
         {
             ComOrcamentoDaOs(new Orcamento { Id = 7, OrdemServicoId = Os, CorrelationId = Saga, ValorTotalGeral = 299.80m });

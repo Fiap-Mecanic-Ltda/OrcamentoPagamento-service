@@ -99,13 +99,19 @@ namespace OrcamentoPagamento.Domain.Services
                 OrdemServicoId = comando.OrdemServicoId,
                 CorrelationId = comando.CorrelationId,
                 Itens = itens,
-                // O GerarOrcamento traz só nome e e-mail do cliente: veículo e telefone ficam
-                // em branco no PDF (o contrato não tem esses campos).
+                // Telefone, problema e veículo são opcionais no contrato: o que vier nulo fica
+                // como "não informado" no PDF.
                 OrdemServico = new OrdemServicoDadosCommand
                 {
                     Status = "AguardandoOrcamento",
+                    DescricaoProblema = comando.DescricaoProblema,
                     ClienteNome = comando.NomeCliente,
-                    ClienteEmail = comando.EmailCliente
+                    ClienteEmail = comando.EmailCliente,
+                    ClienteTelefone = comando.TelefoneCliente,
+                    VeiculoPlaca = comando.Veiculo?.Placa,
+                    VeiculoMarca = comando.Veiculo?.Marca,
+                    VeiculoModelo = comando.Veiculo?.Modelo,
+                    VeiculoAno = comando.Veiculo?.Ano
                 }
             }, cancellationToken)
                 ?? throw new InvalidOperationException($"O calculo do orcamento da OS {comando.OrdemServicoId} foi descartado.");

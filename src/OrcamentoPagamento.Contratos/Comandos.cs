@@ -17,6 +17,16 @@ namespace MechanicLtda.Contratos
         public int ClienteId { get; init; }
         public string NomeCliente { get; init; } = string.Empty;
         public string EmailCliente { get; init; } = string.Empty;
+
+        /// <summary>Opcional: o cadastro do cliente pode não ter telefone.</summary>
+        public string? TelefoneCliente { get; init; }
+
+        /// <summary>Opcional: problema relatado na abertura da OS, para o PDF do orçamento.</summary>
+        public string? DescricaoProblema { get; init; }
+
+        /// <summary>Opcional: nulo se o veículo não foi encontrado no MechanicLtda.</summary>
+        public VeiculoOrdemServico? Veiculo { get; init; }
+
         public IReadOnlyList<ItemOrdemServico> Itens { get; init; } = [];
     }
 
