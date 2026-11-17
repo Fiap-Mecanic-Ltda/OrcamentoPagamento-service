@@ -313,6 +313,6 @@ namespace OrcamentoPagamento.Domain.Services
 
         /// <summary>GUID estável a partir de um texto (chave de idempotência no provedor).</summary>
         internal static Guid ChaveDeterministica(string texto) =>
-            new(MD5.HashData(Encoding.UTF8.GetBytes(texto)));
+            new(SHA256.HashData(Encoding.UTF8.GetBytes(texto)).AsSpan(0, 16));
     }
 }
