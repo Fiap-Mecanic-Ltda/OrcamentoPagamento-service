@@ -27,3 +27,4 @@ appsettings.Local.json
 # SO
 Thumbs.db
 .DS_Store
+coverage/
