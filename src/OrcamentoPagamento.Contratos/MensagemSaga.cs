@@ -25,4 +25,14 @@ namespace MechanicLtda.Contratos
         public int? EstoqueId { get; init; }
         public int? ServicoOficinaId { get; init; }
     }
+
+    /// <summary>Veículo da OS como trafega no GerarOrcamento (só para exibição no orçamento).</summary>
+    public record VeiculoOrdemServico
+    {
+        public int VeiculoId { get; init; }
+        public string? Placa { get; init; }
+        public string? Marca { get; init; }
+        public string? Modelo { get; init; }
+        public int? Ano { get; init; }
+    }
 }

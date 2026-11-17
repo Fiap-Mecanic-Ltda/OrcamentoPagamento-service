@@ -1,6 +1,8 @@
 using MassTransit;
 using MechanicLtda.Contratos;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using OrcamentoPagamento.Infrastructure;
 using OrcamentoPagamento.Application.DTOs;
 using OrcamentoPagamento.Domain.Enums;
 using System.Net;
@@ -51,6 +53,43 @@ namespace OrcamentoPagamento.API.IntegrationTests
             Assert.Equal(179.80m, orcamento.ValorTotalPecas);
             Assert.Equal(120.00m, orcamento.ValorTotalServicos);
             Assert.NotNull(orcamento.Validade);
+        }
+
+        [Fact]
+        public async Task GerarOrcamento_ComVeiculoETelefone_GravaOsDadosDoPdf()
+        {
+            var client = _factory.CriarClienteAutenticado();
+            var saga = Guid.NewGuid();
+            var os = Interlocked.Increment(ref _proximaOs);
+
+            await PublicarAsync(GerarOrcamento(saga, os) with
+            {
+                TelefoneCliente = "11999990000",
+                DescricaoProblema = "Barulho no freio",
+                Veiculo = new VeiculoOrdemServico { VeiculoId = 12, Placa = "ABC1D23", Marca = "Volkswagen", Modelo = "Gol", Ano = 2019 }
+            });
+            var orcamento = await AguardarOrcamentoAsync(client, os, o => o.CorrelationId == saga);
+
+            using (var scope = _factory.Services.CreateScope())
+            {
+                var banco = scope.ServiceProvider.GetRequiredService<BancoOrcamentoContext>();
+                var snapshot = await banco.Orcamentos.AsNoTracking()
+                    .Where(o => o.Id == orcamento.Id)
+                    .Select(o => o.OrdemServicoSnapshot)
+                    .SingleAsync();
+
+                Assert.NotNull(snapshot);
+                Assert.Equal("11999990000", snapshot!.ClienteTelefone);
+                Assert.Equal("Barulho no freio", snapshot.DescricaoProblema);
+                Assert.Equal("ABC1D23", snapshot.VeiculoPlaca);
+                Assert.Equal("Volkswagen", snapshot.VeiculoMarca);
+                Assert.Equal("Gol", snapshot.VeiculoModelo);
+                Assert.Equal(2019, snapshot.VeiculoAno);
+            }
+
+            var pdf = await client.GetAsync($"/api/orcamento/{orcamento.Id}/pdf");
+            Assert.Equal(HttpStatusCode.OK, pdf.StatusCode);
+            Assert.Equal("application/pdf", pdf.Content.Headers.ContentType?.MediaType);
         }
 
         [Fact]
