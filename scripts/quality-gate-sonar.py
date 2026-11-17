@@ -10,7 +10,8 @@ No push o scanner só envia a análise e este script decide pelo status do gate:
   indisponível (plano gratuito não expõe branches que não são a principal): segue com
   aviso, porque o gate já foi exigido no PR que trouxe o código.
 
-Uso: quality-gate-sonar.py [caminho do report-task.txt]  (lê SONAR_TOKEN do ambiente)
+Uso: quality-gate-sonar.py  (na raiz do repositório, depois do `sonarscanner end`; lê
+SONAR_TOKEN do ambiente e o report-task.txt que o scanner grava em .sonarqube/out/.sonar)
 """
 import json
 import os
@@ -65,9 +66,8 @@ def esperar_analise(report, token, prazo):
 
 
 def main():
-    caminho = sys.argv[1] if len(sys.argv) > 1 else REPORT_PADRAO
     token = os.environ["SONAR_TOKEN"]
-    report = ler_report(caminho)
+    report = ler_report(REPORT_PADRAO)
     servidor = report["serverUrl"].rstrip("/")
     prazo = time.monotonic() + int(os.environ.get("SONAR_GATE_TIMEOUT", "300"))
     painel = report.get("dashboardUrl", servidor)
