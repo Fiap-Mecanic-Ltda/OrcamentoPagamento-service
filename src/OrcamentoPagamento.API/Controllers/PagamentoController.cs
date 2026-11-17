@@ -69,6 +69,7 @@ namespace OrcamentoPagamento.API.Controllers
 
                 ResultadoPagamento.NaoEncontrado => NotFound(resposta.Conteudo),
                 ResultadoPagamento.JaAprovado => Conflict(resposta.Conteudo),
+                ResultadoPagamento.OrcamentoIndisponivel => Conflict(resposta.Conteudo),
                 ResultadoPagamento.DadosInvalidos => BadRequest(resposta.Conteudo),
                 _ => StatusCode(StatusCodes.Status502BadGateway, resposta.Conteudo)
             };

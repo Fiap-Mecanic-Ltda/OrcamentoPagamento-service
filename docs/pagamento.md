@@ -243,7 +243,13 @@ traz `Aprovado` e cai no terceiro caso — divergência registrada, não sobresc
 
 ## 4. Eventos publicados
 
-No tópico `orcamento-eventos` que já existe, com o `MessageAttribute` `tipoEvento`:
+> **Atualização (ADR-004):** o SNS saiu. O que move a OS agora são as mensagens da Saga no
+> RabbitMQ: pagamento aprovado publica `PagamentoConfirmado` (vale como a aprovação do
+> orçamento e leva a OS para Execução) e recusado publica `PagamentoFalhou` (a OS continua em
+> Aguardando Aprovação). Só orçamento `Aberto` ou `Aprovado` aceita pagamento; recusado,
+> cancelado ou já pago responde `409`. Ver [contratos-eventos.md](contratos-eventos.md) e
+> [ADR-004](adr/ADR-004-saga-rabbitmq.md). Os eventos abaixo continuam existindo, só no log
+> estruturado:
 
 | Evento | Quando |
 |---|---|
@@ -258,8 +264,8 @@ hoje o monólito, amanhã o serviço de OS que outro time está extraindo. Quem 
 a transição acontece é decisão de alinhamento entre times, registrada em
 [alinhamento-e-discovery.md](alinhamento-e-discovery.md).
 
-Publicação *best-effort*, como já é no orçamento: o pagamento está gravado, falha no SNS
-não desfaz.
+Publicação *best-effort*, como já é no orçamento: o pagamento está gravado, falha ao
+publicar não desfaz (fica no log com o pagamento e a OS).
 
 ## 5. Modo de teste
 
@@ -358,10 +364,10 @@ O desenho repete, de propósito, o que já está implementado para a mensageria:
 
 | Pagamento | Equivalente já existente |
 |---|---|
-| `IGatewayPagamento` (porta no `Domain`) | `IPublicadorEventos` |
-| `MercadoPagoGateway` (único arquivo que conhece o Mercado Pago) | `SnsPublicadorEventos` |
-| `GatewayPagamentoFake` | `PublicadorEventosLog` |
-| `Pagamentos:Habilitado` | `Messaging:Habilitado` |
+| `IGatewayPagamento` (porta no `Domain`) | `IPublicadorSaga` |
+| `MercadoPagoGateway` (único arquivo que conhece o Mercado Pago) | `PublicadorSagaMassTransit` |
+| `GatewayPagamentoFake` | `PublicadorSagaLog` |
+| `Pagamentos:Habilitado` | `Mensageria:Habilitada` |
 
 Consequência prática: o fluxo inteiro, inclusive webhook e máquina de estados, roda em
 teste automatizado sem o Mercado Pago. CI não pode depender de sandbox de terceiro.

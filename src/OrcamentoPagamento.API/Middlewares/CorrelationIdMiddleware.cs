@@ -1,3 +1,5 @@
+using OrcamentoPagamento.Domain.Messaging;
+
 namespace OrcamentoPagamento.API.Middlewares
 {
     /// <summary>
@@ -6,9 +8,9 @@ namespace OrcamentoPagamento.API.Middlewares
     /// (aparecendo em todas as linhas da requisição) e volta na resposta. Quando a chamada
     /// não vem do gateway, um id novo é gerado.
     ///
-    /// O consumidor da fila usa o mesmo nome de escopo, com o CorrelationId que vem no
-    /// evento — um orçamento calculado por mensagem continua rastreável até a requisição
-    /// que alterou os itens da OS.
+    /// Os consumidores da Saga usam o mesmo nome de escopo, com o x-correlation-id que vem na
+    /// mensagem — um orçamento gerado pela Saga continua rastreável até a requisição que
+    /// abriu o fluxo no OS Service.
     /// </summary>
     public class CorrelationIdMiddleware
     {
@@ -31,6 +33,9 @@ namespace OrcamentoPagamento.API.Middlewares
                 correlationId = Guid.NewGuid().ToString("n");
 
             context.Items[HeaderName] = correlationId;
+
+            // Vai no cabeçalho x-correlation-id das mensagens da Saga publicadas nesta requisição.
+            ContextoCorrelacao.CorrelationIdRequisicao = correlationId;
             context.TraceIdentifier = correlationId;
 
             context.Response.OnStarting(() =>

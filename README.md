@@ -3,16 +3,19 @@
 Microsserviço de **orçamentos** da oficina MechanicLtda, em **.NET 9**, seguindo os mesmos
 princípios de DDD e Clean Architecture do repositório principal.
 
-Extraído do monólito [MechanicLtda](https://github.com/Fiap-Mecanic-Ltda/MechanicLtda):
-consome os eventos de alteração de itens da Ordem de Serviço, calcula o orçamento no
-**próprio banco** e expõe consulta, ajuste manual e exportação em PDF.
+Extraído do monólito [MechanicLtda](https://github.com/Fiap-Mecanic-Ltda/MechanicLtda), é o
+**Billing** da Saga da Ordem de Serviço: recebe o `GerarOrcamento` do
+[ordemservico-service](https://github.com/Fiap-Mecanic-Ltda/ordemservico-service) pelo
+**RabbitMQ**, calcula o orçamento no **próprio banco**, responde `OrcamentoGerado` e avisa a
+Saga quando o cliente paga (`PagamentoConfirmado`) ou recusa. Também expõe consulta, ajuste
+manual e exportação em PDF. Contrato das mensagens: [docs/contratos-eventos.md](docs/contratos-eventos.md).
 
 O **pagamento** vive no mesmo serviço, como módulo separado, integrado ao **Mercado Pago**
 via Checkout Transparente, na variante **Payments API** (`POST /v1/payments`) — com a
 dívida técnica de que a Orders API é a recomendada para integração nova, registrada em
 [docs/pagamento.md § 10](docs/pagamento.md).
 
-> **Estado atual:** orçamento e pagamento **implementados e testados** (102 testes). O
+> **Estado atual:** orçamento e pagamento **implementados e testados** (145 testes). O
 > contrato das APIs de pagamento está em [docs/pagamento.md](docs/pagamento.md), que é o
 > que o time do Web usa para codar a chamada. A integração roda apenas com credenciais de
 > teste, sem movimentação de dinheiro real.
@@ -20,63 +23,65 @@ dívida técnica de que a Orders API é a recomendada para integração nova, re
 ## Onde este serviço entra
 
 ```text
-                      ┌──────────────── MechanicLtda (monolito) ───────────────┐
-Browser ─▶ Web (Razor)│  API: Cliente, Veiculo, OrdemServico, Item, Estoque    │
-              │       └────────────────────────┬───────────────────────────────┘
-              │                                │ publica (itens alterados)
-              │ HttpClient                     ▼
-              ▼                        SNS ordem-servico-eventos
-    API Gateway (HTTP API)                      │
-      ├─ /api/orcamento/* ──┐          SQS ordem-servico-itens-alterados ──▶ DLQ
-      └─ /api/*  ─▶ monolito│                   │
-                            ▼                   ▼
-                   ┌─── OrcamentoPagamento-service (este repo) ───┐
-                   │  Orcamento  REST: consulta, ajuste, PDF      │
-                   │             Consumer: recalcula do evento    │
-                   │  Pagamento  REST: cobranca + webhook         │
-                   │  Banco proprio: MechanicOrcamentoDb          │
-                   └───────┬──────────────────────────┬───────────┘
-                           │ publica                  │ Checkout API
-                           ▼                          ▼
-                 SNS orcamento-eventos          Mercado Pago
-                                                      │ webhook
-                                                      └──▶ de volta ao servico
+                                   ┌──────── ordemservico-service (orquestrador) ────────┐
+Browser ─▶ Web (Razor)             │  Saga da OS: Recebida → ... → AguardandoAprovacao   │
+              │                    └───────────────┬─────────────────────▲───────────────┘
+              │                       GerarOrcamento│ CancelarOrcamento   │ OrcamentoGerado/Falhou
+              │                                     │ EstornarPagamento   │ PagamentoConfirmado/Falhou
+              │ HttpClient                          ▼                     │ OrcamentoAprovado/Recusado
+              ▼                         ┌──────── RabbitMQ (exchanges MechanicLtda.Contratos:*) ─┐
+    API Gateway (HTTP API)              │ billing-gerar-orcamento, billing-cancelar-orcamento,   │
+      ├─ /api/orcamento/* ──┐           │ billing-estornar-pagamento                             │
+      ├─ /api/pagamento/* ──┤           └───────────────┬─────────────────────▲──────────────────┘
+      └─ /api/*  ─▶ outros  │                           ▼                     │
+                            ▼          ┌─── OrcamentoPagamento-service (este repo) ───┐
+                            └─────────▶│  Orcamento  REST: consulta, ajuste, PDF,      │
+                                       │             aprovar/recusar                  │
+                                       │             Consumidores da Saga             │
+                                       │  Pagamento  REST: cobranca + webhook         │
+                                       │  Banco proprio: MechanicOrcamentoDb          │
+                                       └──────────────────────┬───────────────────────┘
+                                                              │ Checkout API / refunds
+                                                              ▼
+                                                        Mercado Pago ──webhook──▶ de volta
 ```
 
-Duas portas de entrada para o mesmo cálculo:
+Duas portas de entrada para o cálculo:
 
-- **Assíncrona (principal):** mensagem na fila SQS, disparada pela alteração de itens da OS.
-- **Síncrona (alternativa):** `POST /api/orcamento/recalcular`, com o mesmo payload. Serve
-  para reprocessar mensagem que caiu na DLQ, operar com a mensageria desligada, ou quando o
-  chamador precisa do orçamento na mesma requisição.
+- **Saga (principal):** `GerarOrcamento` na fila `billing-gerar-orcamento`, quando o
+  diagnóstico termina no OS Service. Ver [ADR-004](docs/adr/ADR-004-saga-rabbitmq.md).
+- **Manual:** `POST /api/orcamento/recalcular`. Serve para operar e testar sem a Saga; o
+  orçamento criado assim não tem `correlationId` e não publica nada na Saga.
 
 ## Arquitetura
 
 ```text
 src/
-├── OrcamentoPagamento.API            # Host REST, Swagger, JWT, consumidor SQS, webhook
-├── OrcamentoPagamento.Application    # AppServices, DTOs, contrato dos eventos, PDF
-├── OrcamentoPagamento.Domain         # Orcamento + Pagamento: entidades e regras
-└── OrcamentoPagamento.Infrastructure # EF Core, repositorios, SNS, gateway MercadoPago
+├── OrcamentoPagamento.API            # Host REST, Swagger, JWT, webhook, registro do MassTransit
+├── OrcamentoPagamento.Application    # AppServices, DTOs, PDF
+├── OrcamentoPagamento.Contratos      # Mensagens da Saga (namespace MechanicLtda.Contratos, copia do OS Service)
+├── OrcamentoPagamento.Domain         # Orcamento + Pagamento + Saga: entidades e regras
+└── OrcamentoPagamento.Infrastructure # EF Core, repositorios, consumidores/publicador RabbitMQ, gateway MercadoPago
 tests/
 ├── OrcamentoPagamento.Domain.Tests         # Regra de calculo, idempotencia, ajuste manual
 └── OrcamentoPagamento.API.IntegrationTests # Endpoints, autorizacao, fluxo HTTP completo
 ```
 
-Dependências: `API → Application → Domain` e `API → Infrastructure → Domain`. O `Domain`
-não depende de ninguém; `Application` e `Infrastructure` não dependem uma da outra.
+Dependências: `API → Application → Domain` e `API → Infrastructure → Domain`; o `Domain` só
+depende do `Contratos`, que não tem dependência nenhuma. `Application` e `Infrastructure` não
+dependem uma da outra.
 
 Não há projeto `Bootstrap` como no monólito: há um único host, então a composição fica nas
 extensões do próprio `API`.
 
-> O consumidor SQS mora no host (`API/Messaging/`), e não na `Infrastructure`, porque
-> precisa da camada de `Application` — e `Infrastructure` depende só do `Domain`.
+> A regra da Saga fica no `Domain` (`SagaOrcamentoService`); os consumidores do MassTransit na
+> `Infrastructure` só a chamam, um por fila.
 
 ## Modelo de domínio
 
 | Entidade | Descrição |
 |---|---|
-| `Orcamento` | Agregado raiz. Totais por categoria, validade, marca de ajuste manual e o último evento aplicado (idempotência) |
+| `Orcamento` | Agregado raiz. Totais por categoria, validade, marca de ajuste manual, status na Saga e o `CorrelationId` da Saga que o gerou (idempotência) |
 | `ItemOrcamento` | Cópia local do item que originou o orçamento, já classificado |
 | `OrdemServicoSnapshot` | Dados da OS, do cliente e do veículo no momento do cálculo — é o que alimenta o PDF |
 | `Pagamento` | Tentativa de cobrança de um orçamento. Valor congelado, máquina de estados, e idempotência por requisição e por notificação |
@@ -86,7 +91,8 @@ serviço. Um índice único garante "uma OS, um orçamento" aqui dentro.
 
 | Enum | Valores |
 |---|---|
-| `CategoriaItem` | `1 = Peca`, `2 = Insumo`, `3 = Servico` |
+| `CategoriaItem` | `1 = Peca`, `2 = Insumo`, `3 = Servico` (na Saga chega como texto em `itens[].tipo`) |
+| `StatusOrcamento` | `1 = Aberto`, `2 = Aprovado`, `3 = Pago`, `4 = Recusado`, `5 = Cancelado`. Só `Aberto` e `Aprovado` aceitam pagamento |
 | `StatusPagamento` | `1 = Pendente`, `2 = EmProcessamento`, `3 = Autorizado`, `4 = Aprovado`, `5 = Recusado`, `6 = Cancelado`, `7 = Devolvido`, `8 = EmDisputa`, `9 = Estornado` |
 
 ### Regra de cálculo
@@ -113,11 +119,26 @@ webhook do Mercado Pago.
 | `PUT` | `/api/orcamento/{id}` | Ajuste manual de valores |
 | `DELETE` | `/api/orcamento/{id}` | Remove o orçamento |
 | `GET` | `/api/orcamento/{id}/pdf` | Exporta o orçamento em PDF |
-| `POST` | `/api/orcamento/recalcular` | Recalcula a partir do payload do evento |
+| `POST` | `/api/orcamento/recalcular` | Recálculo manual, fora da Saga |
+| `PATCH` | `/api/orcamento/{id}/aprovar` | Aprovação sem pagamento: publica `OrcamentoAprovado` (só informativo) |
+| `PATCH` | `/api/orcamento/{id}/recusar` | Recusa do cliente (`{ "motivo": "..." }`): publica `OrcamentoRecusado` e cancela pagamentos em aberto |
 | `GET` | `/health` | Healthcheck (público) |
 
-`POST /api/orcamento/recalcular` responde `204 No Content` quando o evento já havia sido
-aplicado — é descarte por idempotência, não erro.
+`POST /api/orcamento/recalcular` responde `204 No Content` quando o `eventoId` já havia sido
+aplicado — é descarte por idempotência, não erro. `aprovar`, `recusar` e `POST /api/pagamento`
+respondem `409` quando o orçamento foi recusado, cancelado ou já pago.
+
+### Saga da OS (RabbitMQ)
+
+| Fila | Recebe | Faz | Responde |
+|---|---|---|---|
+| `billing-gerar-orcamento` | `GerarOrcamento` | Calcula e grava o orçamento (status `Aberto`) | `OrcamentoGerado` ou `OrcamentoFalhou` |
+| `billing-cancelar-orcamento` | `CancelarOrcamento` | Status `Cancelado`, cancela pagamentos em aberto | `OrcamentoCancelado` |
+| `billing-estornar-pagamento` | `EstornarPagamento` | Devolução total no Mercado Pago (ou cancela, se ainda em aberto) | `PagamentoEstornado` |
+
+Pagamento aprovado publica `PagamentoConfirmado` (o orçamento vira `Pago` e a OS vai para
+Execução); recusado publica `PagamentoFalhou`. Regras, idempotência e erros em
+[ADR-004](docs/adr/ADR-004-saga-rabbitmq.md).
 
 As respostas usam o mesmo envelope `ResponseDto` do monólito (`hasErrors`, `getErrors`,
 `getResponse`), de propósito: o host Web lê esse formato hoje e não precisa mudar as views.
@@ -144,7 +165,7 @@ Dois pontos do contrato que valem destaque:
 - **O dado do cartão nunca passa por este backend.** O Web tokeniza com o SDK JS do
   Mercado Pago e manda só o `token`.
 
-Swagger: `/swagger` (local `http://localhost:5080/swagger`, Docker `http://localhost:8081/swagger`).
+Swagger: `/swagger` (local `http://localhost:5080/swagger`, Docker `http://localhost:8083/swagger`).
 
 ## Autenticação
 
@@ -160,12 +181,10 @@ e-mail e senha) e pela Lambda de autenticação por CPF — mesma chave simétri
 | `ConnectionStrings:DefaultConnection` | Banco do serviço (`MechanicOrcamentoDb`) |
 | `JWT_SECRET_KEY` | Chave de validação dos tokens. Variável de ambiente ou configuração |
 | `JwtSettings:Issuer` / `IssuerCpf` / `Audience` | Emissores e audiência aceitos |
-| `Messaging:Habilitado` | `false` desliga publicação e consumo (só log). Padrão em dev e nos testes |
-| `Messaging:TopicoEventosArn` | Tópico SNS onde os eventos do orçamento são publicados |
-| `Messaging:FilaItensAlteradosUrl` | Fila SQS dos eventos de itens alterados |
-| `Messaging:ServiceUrl` | Endpoint alternativo do SNS/SQS (LocalStack) |
-| `Messaging:Regiao` | Região da AWS. Padrão `us-east-1` |
-| `Messaging:VisibilityTimeoutSegundos` | Tempo de invisibilidade da mensagem em processamento. Padrão 60 |
+| `Mensageria:Habilitada` | `true` liga a Saga (consumidores e publicação no RabbitMQ). `false` (padrão) sobe sem broker e só registra as mensagens em log |
+| `Mensageria:Transporte` | `RabbitMq` (padrão) ou `InMemory` (testes) |
+| `RabbitMq:Host` / `Porta` / `VirtualHost` | Broker. No cluster, `rabbitmq.mensageria.svc.cluster.local:5672` |
+| `RabbitMq:Usuario` / `Senha` | Credenciais do broker. No cluster, do SSM via Secret |
 | `Pagamentos:Habilitado` | `false` usa gateway fake, sem tocar no Mercado Pago. Padrão em dev e nos testes |
 | `Pagamentos:MercadoPago:AccessToken` | Access token **de teste**. Via `MERCADOPAGO_ACCESS_TOKEN` ou SSM — nunca em `appsettings` |
 | `Pagamentos:MercadoPago:WebhookSecret` | Secret da validação de `x-signature` do webhook |
@@ -188,75 +207,61 @@ Precisa de um SQL Server acessível e de `JWT_SECRET_KEY` no ambiente:
 $env:JWT_SECRET_KEY = "sua-chave-jwt-secreta-com-no-minimo-32-caracteres"
 ```
 
-Com `Messaging:Habilitado = false` (padrão), o serviço sobe sem tocar na AWS e só responde
-pelo REST. As migrations são aplicadas automaticamente na subida.
+Com `Mensageria:Habilitada = false` (padrão), o serviço sobe sem RabbitMQ e só responde pelo
+REST; as mensagens da Saga ficam no log. As migrations são aplicadas automaticamente na subida.
 
-### Com Docker Compose (LocalStack + banco do InfraSGBD)
+### Com Docker Compose (RabbitMQ + banco do InfraSGBD)
 
 A infraestrutura fica em repositórios próprios:
 
 | Repositório | Conteúdo |
 |---|---|
 | [OrcamentoPagamento-InfraSGBD](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraSGBD) | SQL Server local e Terraform do RDS (`terraform plan/apply`) |
-| [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete) | Terraform do ECR, SNS/SQS, ALB, IAM e SSM + manifestos `k8s/` e deploy no cluster |
+| [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete) | Terraform do ECR, ALB, IAM e SSM + manifestos `k8s/` e deploy no cluster |
 
 O banco sobe primeiro, no InfraSGBD, porque é ele que cria a rede `orcamento-net` usada
-pela API. Use o **mesmo `SA_PASSWORD`** nos dois `.env`:
+pela API. Use o **mesmo `SA_PASSWORD`** nos dois `.env`.
+
+Para validar a Saga ponta a ponta, este serviço usa o **RabbitMQ do OS Service** (5672 no
+host). No `.env` do ordemservico-service, desligue o simulador do Billing
+(`SIMULADOR_BILLING=false`); aqui, use o mesmo usuário e senha do RabbitMQ de lá:
 
 ```bash
-# 1. Banco (repositório OrcamentoPagamento-InfraSGBD)
+# 1. OS Service (SQL Server, RabbitMQ e API na 8081), com SIMULADOR_BILLING=false
+cd ../ordemservico-service && docker compose up -d --build
+
+# 2. Banco deste serviço (repositório OrcamentoPagamento-InfraSGBD)
 cd ../OrcamentoPagamento-InfraSGBD
 cp .env.example .env   # ajuste SA_PASSWORD
 docker compose up -d
 
-# 2. Este serviço
+# 3. Este serviço (API na 8083)
 cd ../OrcamentoPagamento-service
-cp .env.example .env   # ajuste SA_PASSWORD e JWT_SECRET_KEY
+cp .env.example .env   # SA_PASSWORD, JWT_SECRET_KEY e RABBITMQ_USER/RABBITMQ_PASSWORD do OS Service
 docker compose up --build
 ```
 
-Isso sobe:
-
-1. **SQL Server 2022** na porta `1434` do host, pelo InfraSGBD. A `1433` fica livre para o
-   banco do monólito.
-2. **LocalStack** (SNS + SQS) na `4566`, já com tópicos, fila e DLQ criados por
-   `scripts/localstack/01-criar-topico-e-fila.sh`.
-3. **O microsserviço** na `8081`, com a mensageria ligada apontando para o LocalStack.
-
-Para subir no Kubernetes local, veja o README do InfraKubernete.
-
-Publicar um evento de teste:
+Para rodar sozinho, com um RabbitMQ próprio (portas 5674/15674 no host):
 
 ```bash
-docker exec orcamento-localstack awslocal sns publish \
-  --topic-arn arn:aws:sns:us-east-1:000000000000:ordem-servico-eventos \
-  --message-attributes '{"tipoEvento":{"DataType":"String","StringValue":"ordem-servico.itens-alterados"}}' \
-  --message '{
-    "eventoId":"11111111-1111-1111-1111-111111111111",
-    "tipoEvento":"ordem-servico.itens-alterados",
-    "ocorridoEm":"2026-11-06T14:32:10Z",
-    "ordemServicoId":12,
-    "ordemServico":{"descricaoProblema":"Revisao dos 20 mil km","status":"EmDiagnostico","clienteNome":"Carlos Oliveira","clienteEmail":"carlos@email.com","veiculoMarca":"Toyota","veiculoModelo":"Corolla","veiculoPlaca":"ABC1D23","veiculoAno":2021},
-    "itens":[
-      {"itemId":41,"descricao":"Pastilha de freio","categoria":1,"quantidade":2,"valorUnitario":100.00},
-      {"itemId":42,"descricao":"Oleo 5W30","categoria":2,"quantidade":2,"valorUnitario":50.00},
-      {"itemId":43,"descricao":"Mao de obra","categoria":3,"quantidade":1,"valorUnitario":150.00}
-    ]
-  }'
+RABBITMQ_HOST=rabbitmq docker compose --profile rabbitmq up --build
 ```
 
+No painel do RabbitMQ devem aparecer as filas `billing-gerar-orcamento`,
+`billing-cancelar-orcamento` e `billing-estornar-pagamento`, ligadas aos exchanges
+`MechanicLtda.Contratos:GerarOrcamento`, `:CancelarOrcamento` e `:EstornarPagamento`.
+
+Para testar sem o OS Service, publique um `GerarOrcamento` no exchange pelo painel
+(*Exchanges > MechanicLtda.Contratos:GerarOrcamento > Publish message*), com o cabeçalho
+`correlation-id` e o corpo do exemplo de [docs/contratos-eventos.md](docs/contratos-eventos.md).
 Depois, com um token válido:
 
 ```bash
-curl -H "Authorization: Bearer $TOKEN" http://localhost:8081/api/orcamento/ordem-servico/12
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8083/api/orcamento/ordem-servico/42
 ```
 
-Mensagens que falham no processamento acabam na DLQ:
-
-```bash
-docker exec orcamento-localstack awslocal sqs receive-message \
-  --queue-url http://localhost:4566/000000000000/ordem-servico-itens-alterados-dlq
-```
+Comando que falha depois das tentativas vai para a fila `_error` da fila de origem (ex.:
+`billing-gerar-orcamento_error`).
 
 Para parar o serviço. O banco continua de pé no InfraSGBD; para zerá-lo, rode
 `docker compose down -v` lá:
@@ -285,7 +290,7 @@ do cartão de teste:
 
 ```bash
 # 1. Orcamento de R$ 450 para a OS 12
-curl -X POST http://localhost:8081/api/orcamento/recalcular \
+curl -X POST http://localhost:8083/api/orcamento/recalcular \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"eventoId":"'$(uuidgen)'","ocorridoEm":"2026-11-11T12:00:00Z","ordemServicoId":12,
        "itens":[{"itemId":1,"descricao":"Pastilha","categoria":1,"quantidade":2,"valorUnitario":100},
@@ -293,14 +298,14 @@ curl -X POST http://localhost:8081/api/orcamento/recalcular \
                 {"itemId":3,"descricao":"Mao de obra","categoria":3,"quantidade":1,"valorUnitario":150}]}'
 
 # 2. Cobranca que nasce pendente. Repare que nao se manda valor: ele vem do orcamento.
-curl -X POST http://localhost:8081/api/pagamento \
+curl -X POST http://localhost:8083/api/pagamento \
   -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
   -d '{"requisicaoId":"'$(uuidgen)'","orcamentoId":1,"token":"CONT","paymentMethodId":"master",
        "installments":1,"payer":{"email":"comprador@testuser.com",
        "identification":{"type":"CPF","number":"12345678909"}}}'
 
 # 3. Fecha o ciclo sem webhook: Pendente -> Aprovado
-curl -X POST http://localhost:8081/api/pagamento/1/sincronizar -H "Authorization: Bearer $TOKEN"
+curl -X POST http://localhost:8083/api/pagamento/1/sincronizar -H "Authorization: Bearer $TOKEN"
 ```
 
 #### Modo Mercado Pago
@@ -349,11 +354,11 @@ dotnet test
 
 | Projeto | Cobertura |
 |---|---|
-| `OrcamentoPagamento.Domain.Tests` (70) | **Orçamento:** totais por categoria, idempotência (evento repetido e atrasado), snapshot, ajuste manual, publicação e falha na publicação. **Pagamento:** valor vindo do orçamento, idempotência por `requisicaoId`, recusa como resultado, máquina de estados completa, notificação atrasada, cancelamento por valor alterado |
-| `OrcamentoPagamento.API.IntegrationTests` (32) | Autenticação e autorização por role, fluxo recalcular → consultar → ajustar → PDF, criação de pagamento (`APRO`/`FUND`/`CONT`), `409` em orçamento já pago, sincronização, webhook público e repetido, recálculo cancelando pendente |
+| `OrcamentoPagamento.Domain.Tests` (107) | **Orçamento:** totais por categoria, idempotência da rota manual, snapshot, ajuste manual, publicação e falha na publicação. **Pagamento:** valor vindo do orçamento, idempotência por `requisicaoId`, recusa como resultado, máquina de estados completa, notificação atrasada, cancelamento por valor alterado, `PagamentoConfirmado`/`PagamentoFalhou` na Saga, orçamento encerrado. **Saga:** `GerarOrcamento` (tipo texto, repetição, Saga nova, itens inválidos), cancelamento, estorno (devolução, pendente, repetição, provedor fora), aprovação e recusa |
+| `OrcamentoPagamento.API.IntegrationTests` (38) | Autenticação e autorização por role, fluxo recalcular → consultar → ajustar → PDF, criação de pagamento (`APRO`/`FUND`/`CONT`), `409` em orçamento já pago, sincronização, webhook público e repetido, recálculo cancelando pendente. **Saga com o MassTransit em memória:** `GerarOrcamento` pelo bus, pagamento até `Pago`, compensação (estorno e cancelamento), recusa bloqueando pagamento, aprovação |
 
 Os testes de integração sobem a API real com `WebApplicationFactory`, banco InMemory,
-mensageria desligada e **gateway de pagamento fake** — a CI não depende do sandbox do
+mensageria desligada (ou no transporte em memória do MassTransit, nos testes da Saga) e **gateway de pagamento fake** — a CI não depende do sandbox do
 Mercado Pago.
 
 O gateway fake decide o resultado pelo **token**, com os mesmos códigos de quatro letras
@@ -386,7 +391,7 @@ dotnet ef migrations add NomeDaMigration \
 | Repositório | Conteúdo | Pipeline |
 |---|---|---|
 | [InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/InfraKubernete) | Cluster compartilhado (VPC, EC2/k3s, ASG, ALB, IAM/OIDC) | `terraform plan/apply` |
-| [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete) | Terraform do serviço no cluster (ECR, SNS/SQS, ALB, IAM, SSM) + manifestos `k8s/` | `terraform plan/apply` e deploy no cluster |
+| [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete) | Terraform do serviço no cluster (ECR, ALB, IAM, SSM) + manifestos `k8s/` | `terraform plan/apply` e deploy no cluster |
 | [OrcamentoPagamento-InfraSGBD](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraSGBD) | Terraform do RDS SQL Server (instância, subnet group, SG, connection string no SSM) | `terraform plan/apply` |
 | **OrcamentoPagamento-service** (este repo) | Aplicação .NET 9 (`src/`, `tests/`, Dockerfile) | build, testes e push da imagem no ECR |
 
@@ -404,7 +409,9 @@ Autenticação na AWS por **OIDC**, sem access keys estáticas.
 | [Alinhamento e discovery](docs/alinhamento-e-discovery.md) | Documento vivo: o que cada time assume do outro, decisões e perguntas abertas |
 | [Implementação](docs/implementacao.md) | Inventário do que existe e de onde cada parte veio |
 | [ADR-001](docs/adr/ADR-001-extracao-do-orcamento-como-microsservico.md) | Por que extrair o orçamento e por que banco por serviço |
-| [ADR-002](docs/adr/ADR-002-contrato-de-eventos.md) | Contrato do evento, idempotência e tratamento de erro no consumo |
+| [Contratos da Saga](docs/contratos-eventos.md) | Mensagens da Saga da OS (cópia idêntica nos três serviços) |
+| [ADR-002](docs/adr/ADR-002-contrato-de-eventos.md) | *(substituída pela ADR-004)* Evento SNS/SQS de itens alterados |
 | [ADR-003](docs/adr/ADR-003-consumo-pelo-web-via-api-gateway.md) | Como o host Web consome este serviço |
-| [Integração](docs/integracao.md) | O que ainda falta nos outros repositórios |
+| [ADR-004](docs/adr/ADR-004-saga-rabbitmq.md) | Participação na Saga da OS pelo RabbitMQ (substitui SNS/SQS) |
+| [Integração](docs/integracao.md) | Como este serviço conversa com OS Service, Web e infra; validação local |
 | [Postman](docs/postman/README.md) | Coleção com o fluxo completo do orçamento |

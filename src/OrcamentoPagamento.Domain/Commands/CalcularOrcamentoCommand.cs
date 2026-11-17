@@ -3,8 +3,8 @@ using OrcamentoPagamento.Domain.Enums;
 namespace OrcamentoPagamento.Domain.Commands
 {
     /// <summary>
-    /// Entrada do cálculo do orçamento. É o mesmo contrato para o consumo da fila e para
-    /// o endpoint de recálculo manual — o domínio não sabe de onde o pedido veio.
+    /// Entrada do cálculo do orçamento. É o mesmo contrato para o GerarOrcamento da Saga e
+    /// para o endpoint de recálculo manual — o domínio não sabe de onde o pedido veio.
     /// </summary>
     public class CalcularOrcamentoCommand
     {
@@ -15,6 +15,9 @@ namespace OrcamentoPagamento.Domain.Commands
         public int OrdemServicoId { get; set; }
 
         public int DiasValidade { get; set; } = 30;
+
+        /// <summary>Saga que pediu o orçamento (GerarOrcamento). Nulo na rota manual.</summary>
+        public Guid? CorrelationId { get; set; }
 
         public IReadOnlyCollection<ItemCalculoCommand> Itens { get; set; } = Array.Empty<ItemCalculoCommand>();
 

@@ -55,6 +55,10 @@ namespace OrcamentoPagamento.Application.AppServices
             {
                 return RespostaPagamento.Erro(ResultadoPagamento.JaAprovado, ex.Message);
             }
+            catch (OrcamentoIndisponivelException ex)
+            {
+                return RespostaPagamento.Erro(ResultadoPagamento.OrcamentoIndisponivel, ex.Message);
+            }
             catch (ArgumentException ex)
             {
                 return RespostaPagamento.Erro(ResultadoPagamento.DadosInvalidos, ex.Message);

@@ -67,6 +67,33 @@ namespace OrcamentoPagamento.API.Controllers
             return response.hasErrors ? BadRequest(response) : Ok(response);
         }
 
+        /// <summary>
+        /// O cliente aprova o orçamento sem pagar. Só informativo para a Saga da OS
+        /// (OrcamentoAprovado): a aprovação que leva a OS para execução é o pagamento
+        /// confirmado (POST /api/pagamento). 409 se o orçamento foi recusado, cancelado ou pago.
+        /// </summary>
+        [HttpPatch("{id:int}/aprovar")]
+        public async Task<IActionResult> Aprovar(int id, CancellationToken cancellationToken)
+            => ResponderDecisao(await _orcamentoAppService.AprovarAsync(id, cancellationToken));
+
+        /// <summary>
+        /// O cliente recusa o orçamento: ele é encerrado, os pagamentos em aberto são
+        /// cancelados e a Saga da OS recebe OrcamentoRecusado (a OS vai para Cancelada).
+        /// Repetir a chamada só reenvia o evento.
+        /// </summary>
+        [HttpPatch("{id:int}/recusar")]
+        public async Task<IActionResult> Recusar(int id, [FromBody] OrcamentoRecusaDto? corpo, CancellationToken cancellationToken)
+            => ResponderDecisao(await _orcamentoAppService.RecusarAsync(id, corpo?.Motivo, cancellationToken));
+
+        private IActionResult ResponderDecisao((ResultadoDecisaoOrcamento Resultado, ResponseDto<OrcamentoDto> Resposta) decisao)
+            => decisao.Resultado switch
+            {
+                ResultadoDecisaoOrcamento.Ok => Ok(decisao.Resposta),
+                ResultadoDecisaoOrcamento.NaoEncontrado => NotFound(decisao.Resposta),
+                ResultadoDecisaoOrcamento.Indisponivel => Conflict(decisao.Resposta),
+                _ => StatusCode(StatusCodes.Status500InternalServerError, decisao.Resposta)
+            };
+
         /// <summary>Exporta o orçamento como relatório em PDF.</summary>
         [HttpGet("{id:int}/pdf")]
         public async Task<IActionResult> ExportarPdf(int id)
@@ -83,12 +110,11 @@ namespace OrcamentoPagamento.API.Controllers
         }
 
         /// <summary>
-        /// Recalcula o orçamento a partir do mesmo payload do evento da fila.
+        /// Recálculo manual do orçamento a partir dos itens da OS, fora da Saga.
         ///
-        /// Existe para três situações: reprocessar uma mensagem que caiu na DLQ, operar com
-        /// a mensageria desligada, e permitir que o serviço de Ordem de Serviço force o
-        /// cálculo de forma síncrona quando precisar do orçamento na mesma requisição.
-        /// A idempotência é a mesma do consumo: EventoId repetido não recalcula.
+        /// Serve para operar e testar com a mensageria desligada. O orçamento criado aqui não
+        /// tem correlationId e não publica nada na Saga; o caminho normal é o GerarOrcamento
+        /// do OS Service (docs/contratos-eventos.md). EventoId repetido não recalcula (204).
         /// </summary>
         [HttpPost("recalcular")]
         public async Task<IActionResult> Recalcular([FromBody] OrdemServicoItensAlteradosEvent evento, CancellationToken cancellationToken)

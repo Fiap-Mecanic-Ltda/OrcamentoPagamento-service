@@ -14,7 +14,7 @@ using System.Text;
 namespace OrcamentoPagamento.API.IntegrationTests
 {
     /// <summary>
-    /// Sobe a API com banco InMemory e mensageria desligada. A chave JWT é fixada aqui para
+    /// Sobe a API com banco InMemory e mensageria desligada (as mensagens da Saga só vão para o log). A chave JWT é fixada aqui para
     /// que os testes assinem tokens aceitos pela mesma validação usada em produção.
     /// </summary>
     public class OrcamentoApiFactory : WebApplicationFactory<Program>
@@ -24,6 +24,9 @@ namespace OrcamentoPagamento.API.IntegrationTests
         public const string Audience = "MechanicLtda.Clients";
 
         private readonly string _nomeBanco = $"orcamento-tests-{Guid.NewGuid()}";
+
+        /// <summary>Configuração extra das subclasses (ex.: mensageria ligada em memória).</summary>
+        protected virtual IDictionary<string, string?> ConfiguracaoAdicional() => new Dictionary<string, string?>();
 
         protected override void ConfigureWebHost(IWebHostBuilder builder)
         {
@@ -38,8 +41,18 @@ namespace OrcamentoPagamento.API.IntegrationTests
                     ["JwtSettings:Issuer"] = Issuer,
                     ["JwtSettings:IssuerCpf"] = "MechanicLtda.Auth.Cpf",
                     ["JwtSettings:Audience"] = Audience,
-                    ["Messaging:Habilitado"] = "false"
+                    ["Mensageria:Habilitada"] = "false"
                 });
+            });
+
+            // UseSetting entra antes do Program ler a configuração para registrar os serviços
+            // (o ConfigureAppConfiguration acima só vale para o que é lido depois).
+            foreach (var (chave, valor) in ConfiguracaoAdicional())
+                builder.UseSetting(chave, valor);
+
+            builder.ConfigureAppConfiguration((_, config) =>
+            {
+                config.AddInMemoryCollection(ConfiguracaoAdicional());
             });
 
             builder.ConfigureServices(services =>

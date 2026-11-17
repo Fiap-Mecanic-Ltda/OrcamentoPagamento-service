@@ -6,7 +6,7 @@ namespace OrcamentoPagamento.Domain.Interfaces.Gateways
     /// Porta do provedor de pagamento. O domínio fala esta linguagem; traduzir para o
     /// vocabulário do Mercado Pago (ou de outro provedor) é trabalho do adapter.
     ///
-    /// Mesmo papel que IPublicadorEventos tem para o SNS: uma implementação real e uma
+    /// Mesmo papel que IPublicadorSaga tem para o RabbitMQ: uma implementação real e uma
     /// fake, escolhidas por configuração.
     /// </summary>
     public interface IGatewayPagamento
@@ -26,6 +26,14 @@ namespace OrcamentoPagamento.Domain.Interfaces.Gateways
         /// notificação — o corpo do webhook nunca é fonte de verdade.
         /// </summary>
         Task<RespostaGatewayPagamento> ObterAsync(string idExterno, CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Devolve o valor total de uma cobrança aprovada (compensação da Saga:
+        /// EstornarPagamento) e devolve o estado da cobrança depois da devolução. A chave de
+        /// idempotência garante que uma reentrega do comando não peça a devolução duas vezes.
+        /// Falha de comunicação lança <see cref="Exceptions.GatewayPagamentoException"/>.
+        /// </summary>
+        Task<RespostaGatewayPagamento> EstornarAsync(string idExterno, Guid chaveIdempotencia, CancellationToken cancellationToken = default);
     }
 
     /// <summary>Dados necessários para criar a cobrança, já na nossa linguagem.</summary>

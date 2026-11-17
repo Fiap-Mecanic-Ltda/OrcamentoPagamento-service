@@ -10,7 +10,7 @@ automáticos em cada requisição.
 
    | Variável | Padrão | Uso |
    |---|---|---|
-   | `orcamentoBaseUrl` | `http://localhost:8081` | URL do microsserviço. Em produção, a base do API Gateway |
+   | `orcamentoBaseUrl` | `http://localhost:8083` | URL do microsserviço. Em produção, a base do API Gateway |
    | `authBaseUrl` | `http://localhost:8080` | API do monólito, que emite o token |
    | `email` / `senha` | `admin@mechanic.com` / `Admin@123` | Credenciais do seed do monólito |
    | `ordemServicoId` | `12` | OS usada no recálculo |

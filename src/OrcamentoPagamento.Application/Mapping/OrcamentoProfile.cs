@@ -8,7 +8,8 @@ namespace OrcamentoPagamento.Application.Mapping
     {
         public OrcamentoProfile()
         {
-            CreateMap<Orcamento, OrcamentoDto>();
+            CreateMap<Orcamento, OrcamentoDto>()
+                .ForMember(d => d.StatusDescricao, o => o.MapFrom(s => s.Status.ToString()));
             CreateMap<ItemOrcamento, ItemOrcamentoDto>();
 
             // StatusDescricao e preenchido no AppService, a partir do enum.

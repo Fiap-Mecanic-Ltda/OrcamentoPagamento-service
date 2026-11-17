@@ -5,8 +5,9 @@ using System.Text.Json;
 namespace OrcamentoPagamento.Infrastructure.Messaging
 {
     /// <summary>
-    /// Publicador usado quando a mensageria está desligada (Messaging:Habilitado = false):
-    /// execução local sem AWS, e os testes de integração. Registra o evento e segue.
+    /// Eventos internos de domínio (orcamento.calculado, pagamento.aprovado...). Não saem do
+    /// serviço: ficam no log estruturado, para auditoria e rastreio no New Relic. O que outros
+    /// serviços precisam saber vai pela Saga (IPublicadorSaga, RabbitMQ).
     /// </summary>
     public class PublicadorEventosLog : IPublicadorEventos
     {
@@ -20,7 +21,7 @@ namespace OrcamentoPagamento.Infrastructure.Messaging
         public Task PublicarAsync(string tipoEvento, object payload, CancellationToken cancellationToken = default)
         {
             _logger.LogInformation(
-                "Mensageria desligada. Evento {TipoEvento} nao publicado. Payload: {Payload}",
+                "Evento de dominio {TipoEvento}: {Payload}",
                 tipoEvento, JsonSerializer.Serialize(payload));
 
             return Task.CompletedTask;

@@ -60,8 +60,7 @@ namespace OrcamentoPagamento.API.ViewModels
     }
 
     /// <summary>
-    /// Corpo da notificação do Mercado Pago. Shape do provedor, por isso mora no host —
-    /// mesma razão pela qual o consumidor do SQS também fica aqui.
+    /// Corpo da notificação do Mercado Pago. Shape do provedor, por isso mora no host.
     /// </summary>
     public class NotificacaoMercadoPagoViewModel
     {

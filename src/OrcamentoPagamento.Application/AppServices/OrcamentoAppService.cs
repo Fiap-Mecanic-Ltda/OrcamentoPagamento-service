@@ -3,6 +3,8 @@ using OrcamentoPagamento.Application.AppServices.Interfaces;
 using OrcamentoPagamento.Application.DTOs;
 using OrcamentoPagamento.Application.Eventos;
 using OrcamentoPagamento.Domain.Commands;
+using OrcamentoPagamento.Domain.Entities;
+using OrcamentoPagamento.Domain.Exceptions;
 using OrcamentoPagamento.Domain.Interfaces.Services;
 
 namespace OrcamentoPagamento.Application.AppServices
@@ -11,13 +13,16 @@ namespace OrcamentoPagamento.Application.AppServices
     {
         private readonly IOrcamentoService _orcamentoService;
         private readonly IOrcamentoPdfAppService _pdfService;
+        private readonly ISagaOrcamentoService _sagaService;
         private readonly IMapper _mapper;
 
         public OrcamentoAppService(
             IOrcamentoService orcamentoService,
             IOrcamentoPdfAppService pdfService,
+            ISagaOrcamentoService sagaService,
             IMapper mapper)
         {
+            _sagaService = sagaService;
             _orcamentoService = orcamentoService;
             _pdfService = pdfService;
             _mapper = mapper;
@@ -119,11 +124,30 @@ namespace OrcamentoPagamento.Application.AppServices
 
                 var orcamento = await _orcamentoService.CalcularAsync(command, cancellationToken);
 
-                // null = evento descartado por idempotência. Não é erro: a resposta sai sem
-                // conteúdo e o consumidor apaga a mensagem da fila normalmente.
+                // null = pedido descartado por idempotência (eventoId repetido). Não é erro:
+                // a rota responde 204.
                 return response.setResponse(orcamento is null ? null : _mapper.Map<OrcamentoDto>(orcamento));
             }
             catch (Exception ex) { return response.addError(ex); }
+        }
+
+        public Task<(ResultadoDecisaoOrcamento Resultado, ResponseDto<OrcamentoDto> Resposta)> AprovarAsync(int id, CancellationToken cancellationToken = default)
+            => DecidirAsync(() => _sagaService.AprovarAsync(id, cancellationToken));
+
+        public Task<(ResultadoDecisaoOrcamento Resultado, ResponseDto<OrcamentoDto> Resposta)> RecusarAsync(int id, string? motivo, CancellationToken cancellationToken = default)
+            => DecidirAsync(() => _sagaService.RecusarAsync(id, motivo, cancellationToken));
+
+        private async Task<(ResultadoDecisaoOrcamento, ResponseDto<OrcamentoDto>)> DecidirAsync(Func<Task<Orcamento>> acao)
+        {
+            var response = new ResponseDto<OrcamentoDto>();
+            try
+            {
+                var orcamento = await acao();
+                return (ResultadoDecisaoOrcamento.Ok, response.setResponse(_mapper.Map<OrcamentoDto>(orcamento)));
+            }
+            catch (KeyNotFoundException ex) { return (ResultadoDecisaoOrcamento.NaoEncontrado, response.addError(ex.Message)); }
+            catch (OrcamentoIndisponivelException ex) { return (ResultadoDecisaoOrcamento.Indisponivel, response.addError(ex.Message)); }
+            catch (Exception ex) { return (ResultadoDecisaoOrcamento.Erro, response.addError(ex)); }
         }
 
         public async Task<ResponseDto<byte[]>> ExportarPdfAsync(int id)

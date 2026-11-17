@@ -3,27 +3,37 @@
 #
 #   cd ../OrcamentoPagamento-InfraSGBD && docker compose up -d
 #
+# Mensageria da Saga (RabbitMQ). Dois jeitos de rodar:
+#
+#   1. Junto com o OS Service (validação da Saga ponta a ponta): use o RabbitMQ do
+#      docker-compose do ordemservico-service, publicado na 5672 do host. É o padrão:
+#      RABBITMQ_HOST=host.docker.internal, com o usuário e a senha do .env de lá. No OS
+#      Service, desligue o simulador do Billing (SIMULADOR_BILLING=false).
+#
+#        docker compose up --build
+#
+#   2. Sozinho, com um RabbitMQ próprio (perfil "rabbitmq", portas 5674/15674 no host para
+#      não conflitar com OS Service e Execução):
+#
+#        RABBITMQ_HOST=rabbitmq docker compose --profile rabbitmq up --build
+#
 # Os manifestos Kubernetes ficam no OrcamentoPagamento-InfraKubernete.
 services:
-  # SNS e SQS locais. Substitui a AWS no desenvolvimento, com os mesmos SDKs e a mesma
-  # configuração de ARN/URL que a aplicação usa em produção.
-  localstack:
-    image: localstack/localstack:3
-    container_name: orcamento-localstack
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    container_name: orcamento-rabbitmq
+    profiles: ["rabbitmq"]
     environment:
-      SERVICES: sns,sqs
-      DEBUG: "0"
-      AWS_DEFAULT_REGION: us-east-1
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
     ports:
-      - "4566:4566"
-    volumes:
-      - ./scripts/localstack:/etc/localstack/init/ready.d:ro
+      - "5674:5672"     # AMQP
+      - "15674:15672"   # painel de gestão: http://localhost:15674
     healthcheck:
-      test: ["CMD-SHELL", "awslocal sqs list-queues >/dev/null 2>&1 || exit 1"]
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 10s
       timeout: 5s
-      retries: 20
-      start_period: 20s
+      retries: 12
 
   orcamento-api:
     build:
@@ -31,7 +41,8 @@ services:
       dockerfile: src/OrcamentoPagamento.API/Dockerfile
     container_name: orcamento-api
     ports:
-      - "8081:8080"
+      # 8081 é do OS Service e 8082 da Execução: as três APIs rodam juntas no mesmo host.
+      - "8083:8080"
     environment:
       - ASPNETCORE_ENVIRONMENT=Development
       # orcamento-sqlserver é o container do InfraSGBD, alcançado pela rede orcamento-net.
@@ -40,17 +51,14 @@ services:
       - JwtSettings__Issuer=MechanicLtda.API
       - JwtSettings__IssuerCpf=MechanicLtda.Auth.Cpf
       - JwtSettings__Audience=MechanicLtda.Clients
-      # Mensageria apontada para o LocalStack. Os nomes/ARNs são os criados pelo script
-      # em scripts/localstack.
-      - Messaging__Habilitado=true
-      - Messaging__Regiao=us-east-1
-      - Messaging__ServiceUrl=http://localstack:4566
-      - Messaging__TopicoEventosArn=arn:aws:sns:us-east-1:000000000000:orcamento-eventos
-      - Messaging__FilaItensAlteradosUrl=http://localstack:4566/000000000000/ordem-servico-itens-alterados
-      # O SDK exige credenciais mesmo contra o LocalStack, que aceita qualquer valor.
-      - AWS_ACCESS_KEY_ID=test
-      - AWS_SECRET_ACCESS_KEY=test
-      - AWS_DEFAULT_REGION=us-east-1
+      # Saga da OS pelo RabbitMQ (docs/contratos-eventos.md). MENSAGERIA_HABILITADA=false
+      # sobe a API sozinha, sem broker: as mensagens da Saga só vão para o log.
+      - Mensageria__Habilitada=${MENSAGERIA_HABILITADA:-true}
+      - Mensageria__Transporte=RabbitMq
+      - RabbitMq__Host=${RABBITMQ_HOST:-host.docker.internal}
+      - RabbitMq__Porta=${RABBITMQ_PORTA:-5672}
+      - RabbitMq__Usuario=${RABBITMQ_USER:-guest}
+      - RabbitMq__Senha=${RABBITMQ_PASSWORD:-guest}
       # Pagamento. Os defaults mantêm o gateway fake, então subir sem .env funciona e
       # não toca no Mercado Pago. Trocar para o provedor real é editar o .env — o duplo
       # underscore é como o .NET mapeia seção aninhada (Pagamentos:MercadoPago:...).
@@ -58,12 +66,11 @@ services:
       - Pagamentos__MercadoPago__AccessToken=${MERCADOPAGO_ACCESS_TOKEN:-}
       - Pagamentos__MercadoPago__WebhookSecret=${MERCADOPAGO_WEBHOOK_SECRET:-}
       - Pagamentos__MercadoPago__NotificationUrl=${MERCADOPAGO_NOTIFICATION_URL:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - default
       - orcamento-net
-    depends_on:
-      localstack:
-        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 5s
