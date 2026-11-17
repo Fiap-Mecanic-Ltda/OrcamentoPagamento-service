@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" Version="9.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Binder" Version="9.0.15" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.15" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OrcamentoPagamento.Contratos\OrcamentoPagamento.Contratos.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OrcamentoPagamento.Domain.Tests" />
+  </ItemGroup>
+
+</Project>
