@@ -86,9 +86,9 @@ jobs:
           /d:sonar.token="$SONAR_TOKEN"
           /d:sonar.cs.opencover.reportsPaths="coverage/**/coverage.opencover.xml"
           /d:sonar.exclusions="**/Migrations/**"
-          /d:sonar.coverage.exclusions="**/Migrations/**,tests/**"
+          /d:sonar.coverage.exclusions="**/Migrations/**,tests/**,scripts/**"
           /d:sonar.cpd.exclusions="**/Migrations/**"
-          /d:sonar.qualitygate.wait=true
+          /d:sonar.qualitygate.wait=${{ github.event_name == 'pull_request' }}
 
       - name: Restore
         run: dotnet restore OrcamentoPagamento.sln
@@ -111,10 +111,18 @@ jobs:
       - name: Cobertura minima de ${{ env.COBERTURA_MINIMA }}%
         run: python3 scripts/verificar-cobertura.py coverage/relatorio/Cobertura.xml "$COBERTURA_MINIMA"
 
-      # Com sonar.qualitygate.wait, este passo falha se o quality gate reprovar.
+      # No PR, com sonar.qualitygate.wait, este passo falha se o quality gate reprovar.
+      # No push o scanner so envia a analise e o passo seguinte confere o gate: no plano
+      # gratuito o SonarCloud nao expoe o gate de branches que nao sao a principal, e a
+      # main pode ficar sem status ate calcular o codigo novo. Nesses casos o gate ja foi
+      # exigido no PR que trouxe o codigo; ERROR continua reprovando o build.
       - name: Fim da analise e quality gate do SonarCloud
         if: env.SONAR_TOKEN != ''
         run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+      - name: Quality gate do SonarCloud (push)
+        if: env.SONAR_TOKEN != '' && github.event_name != 'pull_request'
+        run: python3 scripts/quality-gate-sonar.py
 
       - name: Publica os resultados de cobertura
         if: always()
