@@ -10,7 +10,8 @@ name: Esteira de CI/CD - Orcamento e Pagamento (microsservico)
 # O deploy no cluster e feito no OrcamentoPagamento-InfraKubernete (workflow
 # "Deploy no Kubernetes (k3s) - Orcamento").
 #
-# - PR e push em desenvolvimento, homologacao e main: build e testes.
+# - PR e push em desenvolvimento, homologacao e main: build, testes, cobertura minima de
+#   80% (falha o build), SonarCloud (quando houver SONAR_TOKEN) e quality gate.
 # - push em main: publica a imagem no ECR e dispara o deploy no cluster.
 on:
   push:
@@ -21,6 +22,7 @@ on:
 
 env:
   DOTNET_VERSION: "9.0.x"
+  COBERTURA_MINIMA: 80
   # Precisam bater com os defaults de infra/variables.tf do repositorio
   # OrcamentoPagamento-InfraKubernete (aws_region, project_name, environment).
   AWS_REGION: us-east-1
@@ -42,14 +44,51 @@ jobs:
   build-and-test:
     name: Build e testes
     runs-on: ubuntu-latest
+    env:
+      # Sem o secret (ex.: PR de fork), o Sonar e pulado com aviso; o resto da esteira roda.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      SONAR_ORGANIZATION: ${{ vars.SONAR_ORGANIZATION || 'fiap-mecanic-ltda' }}
+      SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY || 'Fiap-Mecanic-Ltda_OrcamentoPagamento-service' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # o Sonar usa o historico para saber o que e codigo novo
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup Java (SonarScanner)
+        if: env.SONAR_TOKEN != ''
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Ferramentas
+        run: |
+          dotnet tool install --global dotnet-reportgenerator-globaltool --version 5.5.12
+          if [ -n "$SONAR_TOKEN" ]; then
+            dotnet tool install --global dotnet-sonarscanner --version 12.1.0
+          else
+            echo "::warning::SONAR_TOKEN nao configurado: analise do SonarCloud pulada."
+          fi
+
+      - name: Inicio da analise do SonarCloud
+        if: env.SONAR_TOKEN != ''
+        run: >
+          dotnet sonarscanner begin
+          /k:"$SONAR_PROJECT_KEY"
+          /o:"$SONAR_ORGANIZATION"
+          /d:sonar.host.url="https://sonarcloud.io"
+          /d:sonar.token="$SONAR_TOKEN"
+          /d:sonar.cs.opencover.reportsPaths="coverage/**/coverage.opencover.xml"
+          /d:sonar.exclusions="**/Migrations/**"
+          /d:sonar.coverage.exclusions="**/Migrations/**,tests/**"
+          /d:sonar.cpd.exclusions="**/Migrations/**"
+          /d:sonar.qualitygate.wait=true
 
       - name: Restore
         run: dotnet restore OrcamentoPagamento.sln
@@ -58,7 +97,35 @@ jobs:
         run: dotnet build OrcamentoPagamento.sln --configuration Release --no-restore
 
       - name: Testes automatizados
-        run: dotnet test OrcamentoPagamento.sln --configuration Release --no-build --verbosity normal
+        run: >
+          dotnet test OrcamentoPagamento.sln --configuration Release --no-build --verbosity normal
+          --settings coverlet.runsettings --collect:"XPlat Code Coverage" --results-directory coverage
+
+      - name: Relatorio de cobertura
+        if: always()
+        run: |
+          reportgenerator -reports:"coverage/**/coverage.cobertura.xml" -targetdir:coverage/relatorio \
+            -reporttypes:"Cobertura;MarkdownSummaryGithub;Html"
+          cat coverage/relatorio/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Cobertura minima de ${{ env.COBERTURA_MINIMA }}%
+        run: python3 scripts/verificar-cobertura.py coverage/relatorio/Cobertura.xml "$COBERTURA_MINIMA"
+
+      # Com sonar.qualitygate.wait, este passo falha se o quality gate reprovar.
+      - name: Fim da analise e quality gate do SonarCloud
+        if: env.SONAR_TOKEN != ''
+        run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+      - name: Publica os resultados de cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura
+          path: |
+            coverage/**/coverage.cobertura.xml
+            coverage/**/coverage.opencover.xml
+            coverage/relatorio/
+          if-no-files-found: ignore
 
   # Confirma se a role de OIDC (provisionada pelo Terraform no repositorio de
   # infra) ja existe antes de tentar autenticar. Sem isso, um push antes do
