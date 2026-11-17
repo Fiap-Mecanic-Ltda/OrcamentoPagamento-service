@@ -10,13 +10,13 @@ name: Esteira de CI/CD - Orcamento e Pagamento (microsservico)
 # O deploy no cluster e feito no OrcamentoPagamento-InfraKubernete (workflow
 # "Deploy no Kubernetes (k3s) - Orcamento").
 #
-# - PR e push em desenvolvimento, homolog, homologacao e main: build e testes.
+# - PR e push em desenvolvimento, homologacao e main: build e testes.
 # - push em main: publica a imagem no ECR e dispara o deploy no cluster.
 on:
   push:
-    branches: [main, desenvolvimento, homolog, homologacao]
+    branches: [main, desenvolvimento, homologacao]
   pull_request:
-    branches: [main, desenvolvimento, homolog, homologacao]
+    branches: [main, desenvolvimento, homologacao]
   workflow_dispatch:
 
 env:

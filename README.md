@@ -383,7 +383,7 @@ dotnet ef migrations add NomeDaMigration \
 
 `.github/workflows/main.yml`, no mesmo contrato dos outros repositórios de aplicação:
 
-- PR e push em `desenvolvimento`, `homolog`, `homologacao` e `main`: build e testes.
+- PR e push em `desenvolvimento`, `homologacao` e `main`: build e testes.
 - push em `main`: publica a imagem no ECR (`mechanicltda-orcamento`, tags `latest` e SHA) e
   dispara o workflow de deploy no
   [OrcamentoPagamento-InfraKubernete](https://github.com/Fiap-Mecanic-Ltda/OrcamentoPagamento-InfraKubernete).
