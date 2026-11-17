@@ -57,7 +57,7 @@ app.MapControllers();
 // Usado pelo healthcheck do Docker Compose e pelas probes do Kubernetes.
 app.MapGet("/health", () => Results.Ok(new { status = "ok", servico = "orcamento" })).AllowAnonymous();
 
-app.Run();
+await app.RunAsync();
 
 // Expõe a classe Program para o WebApplicationFactory dos testes de integração.
 public partial class Program { }
