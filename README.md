@@ -401,6 +401,8 @@ OrcamentoPagamento-InfraKubernete).
 
 Autenticação na AWS por **OIDC**, sem access keys estáticas.
 
+Com o secret `SONAR_TOKEN`, a esteira analisa o código no SonarCloud. No PR, a esteira espera o quality gate e falha se ele reprovar. No push na `main`, quem confere o gate é o `scripts/quality-gate-sonar.py`: ele falha com `ERROR` e só avisa quando o gate volta `NONE` ou não está acessível. No plano gratuito, o SonarCloud nem sempre calcula o gate na `main`, e isso travava a publicação da imagem.
+
 ## Documentação
 
 | Documento | Assunto |
