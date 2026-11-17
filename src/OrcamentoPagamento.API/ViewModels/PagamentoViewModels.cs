@@ -67,7 +67,7 @@ namespace OrcamentoPagamento.API.ViewModels
         public long? Id { get; set; }
 
         /// <summary>false quando a cobrança foi feita com credenciais de teste.</summary>
-        public bool LiveMode { get; set; }
+        public bool? LiveMode { get; set; }
 
         /// <summary>Tipo do recurso: payment, plan, subscription…</summary>
         public string? Type { get; set; }

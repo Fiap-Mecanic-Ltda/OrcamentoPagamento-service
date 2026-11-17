@@ -42,16 +42,15 @@ namespace OrcamentoPagamento.API.Controllers
         [HttpPost]
         public async Task<IActionResult> Receber(
             [FromBody] NotificacaoMercadoPagoViewModel notificacao,
+            [FromQuery(Name = "data.id")] string? dataIdQuery,
+            [FromHeader(Name = "x-signature")] string? assinatura,
+            [FromHeader(Name = "x-request-id")] string? requestId,
             CancellationToken cancellationToken)
         {
             // O data.id pode vir no corpo ou na query, dependendo de como a notificação foi
             // configurada no painel. O da query tem precedência porque é o que entra no
             // manifest da assinatura.
-            var dataIdQuery = Request.Query["data.id"].FirstOrDefault();
             var dataId = string.IsNullOrWhiteSpace(dataIdQuery) ? notificacao?.Data?.Id : dataIdQuery;
-
-            var assinatura = Request.Headers["x-signature"].FirstOrDefault();
-            var requestId = Request.Headers["x-request-id"].FirstOrDefault();
 
             if (!_validador.Validar(assinatura, requestId, dataId))
                 return Unauthorized();
