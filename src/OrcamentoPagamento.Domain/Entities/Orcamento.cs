@@ -37,10 +37,37 @@ namespace OrcamentoPagamento.Domain.Entities
 
         public DateTime? AjustadoEm { get; set; }
 
-        // ─── Idempotência do consumo de eventos ─────────────────────────────────
-        // O SQS entrega ao menos uma vez e sem garantia de ordem entre mensagens de
-        // OSs diferentes. Guardar o último evento aplicado permite descartar
-        // reentrega (mesmo EventoId) e evento atrasado (OcorridoEm mais antigo).
+        // ─── Saga da OS ─────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Id da Saga (correlationId do GerarOrcamento) que gerou este orçamento. Nulo para
+        /// orçamento criado pela rota manual de recálculo, que não participa da Saga. É a
+        /// chave de idempotência do GerarOrcamento: correlationId + nome da mensagem.
+        /// </summary>
+        public Guid? CorrelationId { get; set; }
+
+        public StatusOrcamento Status { get; set; } = StatusOrcamento.Aberto;
+
+        /// <summary>Motivo da recusa ou do cancelamento.</summary>
+        [MaxLength(500)]
+        public string? MotivoStatus { get; set; }
+
+        /// <summary>Aceita pagamento: equivale à OS em Aguardando Aprovação.</summary>
+        public bool EstaEmAberto() => Status is StatusOrcamento.Aberto or StatusOrcamento.Aprovado;
+
+        public bool ParticipaDaSaga() => CorrelationId.HasValue && CorrelationId.Value != Guid.Empty;
+
+        /// <summary>Encerra o orçamento (recusa ou cancelamento). Idempotente.</summary>
+        public void Encerrar(StatusOrcamento status, string? motivo)
+        {
+            Status = status;
+            MotivoStatus = string.IsNullOrWhiteSpace(motivo) ? null : motivo.Length > 500 ? motivo[..500] : motivo;
+        }
+
+        // ─── Idempotência da rota manual de recálculo ───────────────────────────
+        // POST /api/orcamento/recalcular pode ser repetido pelo chamador. Guardar o
+        // último evento aplicado permite descartar reenvio (mesmo EventoId) e
+        // pedido atrasado (OcorridoEm mais antigo). A Saga usa o CorrelationId.
 
         public Guid? UltimoEventoId { get; set; }
 

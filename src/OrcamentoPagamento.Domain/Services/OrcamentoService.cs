@@ -95,6 +95,16 @@ namespace OrcamentoPagamento.Domain.Services
 
                 AplicarSnapshot(orcamento, command.OrdemServico);
 
+                // Uma Saga nova (GerarOrcamento com outro correlationId) reabre o orçamento da
+                // OS, mesmo que uma Saga anterior o tenha recusado ou cancelado. A rota manual
+                // de recálculo não mexe no status nem na Saga.
+                if (command.CorrelationId.HasValue && command.CorrelationId != orcamento.CorrelationId)
+                {
+                    orcamento.CorrelationId = command.CorrelationId;
+                    orcamento.Status = StatusOrcamento.Aberto;
+                    orcamento.MotivoStatus = null;
+                }
+
                 var persistido = novo
                     ? await _orcamentoRepository.AdicionarAsync(orcamento)
                     : await _orcamentoRepository.AtualizarAsync(orcamento);
@@ -268,7 +278,7 @@ namespace OrcamentoPagamento.Domain.Services
         }
 
         /// <summary>
-        /// Publicação best-effort: o orçamento já está gravado, então uma falha no SNS não
+        /// Publicação best-effort: o orçamento já está gravado, então uma falha ao publicar não
         /// desfaz o cálculo. Ela é registrada e notificada, como o monólito faz com o SMTP.
         /// </summary>
         private async Task PublicarAsync(string tipoEvento, Orcamento orcamento, CancellationToken cancellationToken)

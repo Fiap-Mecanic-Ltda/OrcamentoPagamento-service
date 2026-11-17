@@ -14,7 +14,34 @@ namespace OrcamentoPagamento.Application.DTOs
         public DateTime? Validade { get; set; }
         public bool AjustadoManualmente { get; set; }
         public DateTime? AjustadoEm { get; set; }
+
+        /// <summary>Situação na Saga da OS: Aberto, Aprovado, Pago, Recusado ou Cancelado.</summary>
+        public StatusOrcamento Status { get; set; }
+
+        /// <summary>Nome do status, para a tela não precisar conhecer o enum.</summary>
+        public string StatusDescricao { get; set; } = string.Empty;
+
+        public string? MotivoStatus { get; set; }
+
+        /// <summary>Id da Saga da OS que gerou o orçamento. Nulo quando veio da rota manual.</summary>
+        public Guid? CorrelationId { get; set; }
+
         public List<ItemOrcamentoDto> Itens { get; set; } = new();
+    }
+
+    /// <summary>Corpo opcional da recusa do orçamento pelo cliente.</summary>
+    public class OrcamentoRecusaDto
+    {
+        public string? Motivo { get; set; }
+    }
+
+    /// <summary>Desfecho de aprovar/recusar, para o controller escolher o status HTTP.</summary>
+    public enum ResultadoDecisaoOrcamento
+    {
+        Ok,
+        NaoEncontrado,
+        Indisponivel,
+        Erro
     }
 
     public class ItemOrcamentoDto

@@ -1,3 +1,4 @@
+using MechanicLtda.Contratos;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using OrcamentoPagamento.Domain.Commands;
@@ -18,6 +19,7 @@ namespace OrcamentoPagamento.Domain.Tests
         private readonly Mock<IOrcamentoRepository> _orcamentoRepositorio = new();
         private readonly Mock<IGatewayPagamento> _gateway = new();
         private readonly Mock<IPublicadorEventos> _publicador = new();
+        private readonly Mock<IPublicadorSaga> _publicadorSaga = new();
         private readonly PagamentoService _service;
 
         public PagamentoServiceTests()
@@ -38,7 +40,8 @@ namespace OrcamentoPagamento.Domain.Tests
                 _pagamentoRepositorio.Object,
                 _orcamentoRepositorio.Object,
                 _gateway.Object,
-                _publicador.Object);
+                _publicador.Object,
+                _publicadorSaga.Object);
         }
 
         // ─── Criação ────────────────────────────────────────────────────────────
@@ -351,16 +354,118 @@ namespace OrcamentoPagamento.Domain.Tests
 
         // ─── Helpers ────────────────────────────────────────────────────────────
 
-        private void ComOrcamento(decimal valor, int orcamentoId = 1, int ordemServicoId = 12)
+        // ─── Saga da OS ─────────────────────────────────────────────────────────
+
+        [Fact]
+        public async Task CriarAsync_AprovadoComSaga_PublicaPagamentoConfirmadoEMarcaOrcamentoPago()
         {
+            var saga = Guid.NewGuid();
+            var orcamento = ComOrcamento(valor: 450m, correlationId: saga);
+            ComGatewayRespondendo(StatusPagamento.Aprovado, "accredited");
+
+            var resultado = await _service.CriarAsync(NovoComando());
+
+            Assert.Equal(StatusOrcamento.Pago, orcamento.Status);
+            _orcamentoRepositorio.Verify(r => r.AtualizarAsync(orcamento), Times.Once);
+            _publicadorSaga.Verify(p => p.PublicarAsync(
+                It.Is<PagamentoConfirmado>(m => m.CorrelationId == saga && m.OrdemServicoId == 12
+                                                && m.PagamentoId == resultado.Pagamento.Id && m.Valor == 450m
+                                                && m.MeioPagamento == "master"),
+                It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task CriarAsync_RecusadoComSaga_PublicaPagamentoFalhouEMantemOrcamentoAberto()
+        {
+            var orcamento = ComOrcamento(valor: 450m, correlationId: Guid.NewGuid());
+            ComGatewayRespondendo(StatusPagamento.Recusado, "cc_rejected_insufficient_amount");
+
+            await _service.CriarAsync(NovoComando());
+
+            Assert.Equal(StatusOrcamento.Aberto, orcamento.Status);
+            _publicadorSaga.Verify(p => p.PublicarAsync(
+                It.Is<PagamentoFalhou>(m => m.Motivo == "cc_rejected_insufficient_amount"),
+                It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task CriarAsync_OrcamentoForaDaSaga_NaoPublicaNaSaga()
+        {
+            ComOrcamento(valor: 450m);
+            ComGatewayRespondendo(StatusPagamento.Aprovado, "accredited");
+
+            await _service.CriarAsync(NovoComando());
+
+            _publicadorSaga.VerifyNoOtherCalls();
+        }
+
+        [Theory]
+        [InlineData(StatusOrcamento.Recusado)]
+        [InlineData(StatusOrcamento.Cancelado)]
+        public async Task CriarAsync_OrcamentoEncerrado_LancaOrcamentoIndisponivelSemCobrar(StatusOrcamento status)
+        {
+            var orcamento = ComOrcamento(valor: 450m, correlationId: Guid.NewGuid());
+            orcamento.Status = status;
+
+            await Assert.ThrowsAsync<OrcamentoIndisponivelException>(() => _service.CriarAsync(NovoComando()));
+
+            _gateway.Verify(g => g.CriarAsync(It.IsAny<RequisicaoGatewayPagamento>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task SincronizarAsync_PendenteParaAprovadoComSaga_PublicaPagamentoConfirmado()
+        {
+            var orcamento = ComOrcamento(valor: 450m, correlationId: Guid.NewGuid());
+            var pagamento = new Pagamento
+            {
+                Id = 9, OrcamentoId = 1, OrdemServicoId = 12, Valor = 450m,
+                Status = StatusPagamento.Pendente, IdExterno = "mp-9"
+            };
+            _pagamentoRepositorio.Setup(r => r.ObterPorIdAsync("9")).ReturnsAsync(pagamento);
+            _gateway
+                .Setup(g => g.ObterAsync("mp-9", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new RespostaGatewayPagamento { IdExterno = "mp-9", Status = StatusPagamento.Aprovado, StatusDetalhe = "accredited" });
+
+            await _service.SincronizarAsync(9);
+
+            Assert.Equal(StatusOrcamento.Pago, orcamento.Status);
+            _publicadorSaga.Verify(p => p.PublicarAsync(
+                It.Is<PagamentoConfirmado>(m => m.PagamentoId == 9), It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task CriarAsync_FalhaAoPublicarNaSaga_NaoDesfazOPagamento()
+        {
+            ComOrcamento(valor: 450m, correlationId: Guid.NewGuid());
+            ComGatewayRespondendo(StatusPagamento.Aprovado, "accredited");
+            _publicadorSaga
+                .Setup(p => p.PublicarAsync(It.IsAny<PagamentoConfirmado>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new InvalidOperationException("RabbitMQ fora"));
+
+            var resultado = await _service.CriarAsync(NovoComando());
+
+            Assert.Equal(StatusPagamento.Aprovado, resultado.Pagamento.Status);
+        }
+
+        private Orcamento ComOrcamento(decimal valor, int orcamentoId = 1, int ordemServicoId = 12, Guid? correlationId = null)
+        {
+            var orcamento = new Orcamento
+            {
+                Id = orcamentoId,
+                OrdemServicoId = ordemServicoId,
+                ValorTotalGeral = valor,
+                CorrelationId = correlationId
+            };
+
             _orcamentoRepositorio
                 .Setup(r => r.ObterPorIdAsync(orcamentoId.ToString()))
-                .ReturnsAsync(new Orcamento
-                {
-                    Id = orcamentoId,
-                    OrdemServicoId = ordemServicoId,
-                    ValorTotalGeral = valor
-                });
+                .ReturnsAsync(orcamento);
+
+            _orcamentoRepositorio
+                .Setup(r => r.AtualizarAsync(It.IsAny<Orcamento>()))
+                .ReturnsAsync((Orcamento o) => o);
+
+            return orcamento;
         }
 
         private void ComGatewayRespondendo(StatusPagamento status, string detalhe)

@@ -1,6 +1,6 @@
 # ADR-002 — Contrato de eventos: payload auto-contido e idempotência pelo evento
 
-- **Status:** aceito
+- **Status:** substituído pela [ADR-004](ADR-004-saga-rabbitmq.md) (SNS/SQS e o evento `ordem-servico.itens-alterados` saíram; o orçamento é pedido pela Saga da OS no RabbitMQ). Mantido como histórico.
 - **Data:** 2026-11-06
 
 ## Contexto

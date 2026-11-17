@@ -21,6 +21,7 @@ namespace OrcamentoPagamento.API.Extensions
 
             services.AddScoped<IOrcamentoService, OrcamentoService>();
             services.AddScoped<IPagamentoService, PagamentoService>();
+            services.AddScoped<ISagaOrcamentoService, SagaOrcamentoService>();
 
             services.AddScoped<IOrcamentoAppService, OrcamentoAppService>();
             services.AddScoped<IPagamentoAppService, PagamentoAppService>();

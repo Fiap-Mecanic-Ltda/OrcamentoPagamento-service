@@ -70,6 +70,9 @@ namespace OrcamentoPagamento.Application.AppServices.Interfaces
         /// <summary>O orçamento já tem pagamento aprovado. 409.</summary>
         JaAprovado,
 
+        /// <summary>O orçamento foi recusado ou cancelado e não aceita pagamento. 409.</summary>
+        OrcamentoIndisponivel,
+
         /// <summary>Payload inválido ou orçamento sem valor. 400.</summary>
         DadosInvalidos,
 

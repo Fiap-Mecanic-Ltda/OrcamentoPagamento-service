@@ -6,9 +6,9 @@ using System.Collections.Concurrent;
 namespace OrcamentoPagamento.Infrastructure.Gateways
 {
     /// <summary>
-    /// Gateway usado quando `Pagamentos:Habilitado = false`: desenvolvimento local sem AWS
-    /// nem Mercado Pago, e os testes automatizados. Mesmo papel do PublicadorEventosLog
-    /// para o SNS.
+    /// Gateway usado quando `Pagamentos:Habilitado = false`: desenvolvimento local sem
+    /// Mercado Pago, e os testes automatizados. Mesmo papel do PublicadorSagaLog para o
+    /// RabbitMQ.
     ///
     /// O resultado é decidido pelo **token**, usando os mesmos códigos de quatro letras que
     /// o Mercado Pago usa no nome do titular do cartão de teste. Num ambiente real esses
@@ -85,6 +85,25 @@ namespace OrcamentoPagamento.Infrastructure.Gateways
                 estado = new EstadoFake(StatusPagamento.Aprovado, "accredited", DateTime.UtcNow);
                 Estados[idExterno] = estado;
             }
+
+            return Task.FromResult(new RespostaGatewayPagamento
+            {
+                IdExterno = idExterno,
+                Status = estado.Status,
+                StatusDetalhe = estado.Detalhe,
+                ModoProducao = false,
+                UltimaAtualizacao = estado.AtualizadoEm
+            });
+        }
+
+        public Task<RespostaGatewayPagamento> EstornarAsync(string idExterno, Guid chaveIdempotencia, CancellationToken cancellationToken = default)
+        {
+            // Mesmo vocabulário do provedor: devolução total vira "refunded" (Devolvido).
+            var estado = new EstadoFake(StatusPagamento.Devolvido, "refunded", DateTime.UtcNow);
+            Estados[idExterno] = estado;
+
+            _logger.LogWarning(
+                "Pagamentos desligados: devolucao do pagamento {IdExterno} simulada pelo gateway fake.", idExterno);
 
             return Task.FromResult(new RespostaGatewayPagamento
             {

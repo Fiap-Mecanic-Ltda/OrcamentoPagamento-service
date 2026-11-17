@@ -87,6 +87,30 @@ namespace OrcamentoPagamento.Infrastructure.Gateways
             return await EnviarAsync(request, $"consultar pagamento {idExterno}", cancellationToken);
         }
 
+        /// <summary>
+        /// Devolução total: POST /v1/payments/{id}/refunds sem corpo. A resposta é o objeto do
+        /// reembolso, não o do pagamento, então o estado final é lido em seguida pela consulta
+        /// normal ("refunded" vira Devolvido).
+        /// </summary>
+        public async Task<RespostaGatewayPagamento> EstornarAsync(string idExterno, Guid chaveIdempotencia, CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(_options.AccessToken))
+                throw new GatewayPagamentoException(
+                    "Pagamentos:MercadoPago:AccessToken nao configurado.");
+
+            using (var request = new HttpRequestMessage(HttpMethod.Post, $"/v1/payments/{idExterno}/refunds")
+            {
+                Content = JsonContent.Create(new Dictionary<string, object?>(), options: JsonOptions)
+            })
+            {
+                Autenticar(request);
+                request.Headers.Add("X-Idempotency-Key", chaveIdempotencia.ToString());
+                await EnviarSemInterpretarAsync(request, $"estornar pagamento {idExterno}", cancellationToken);
+            }
+
+            return await ObterAsync(idExterno, cancellationToken);
+        }
+
         private void Autenticar(HttpRequestMessage request)
         {
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AccessToken);
@@ -121,6 +145,15 @@ namespace OrcamentoPagamento.Infrastructure.Gateways
             string operacao,
             CancellationToken cancellationToken)
         {
+            var conteudo = await EnviarSemInterpretarAsync(request, operacao, cancellationToken);
+            return Interpretar(conteudo, operacao);
+        }
+
+        private async Task<string> EnviarSemInterpretarAsync(
+            HttpRequestMessage request,
+            string operacao,
+            CancellationToken cancellationToken)
+        {
             HttpResponseMessage resposta;
 
             try
@@ -147,7 +180,7 @@ namespace OrcamentoPagamento.Infrastructure.Gateways
                     $"Mercado Pago respondeu {(int)resposta.StatusCode} ao {operacao}.");
             }
 
-            return Interpretar(conteudo, operacao);
+            return conteudo;
         }
 
         private RespostaGatewayPagamento Interpretar(string conteudo, string operacao)

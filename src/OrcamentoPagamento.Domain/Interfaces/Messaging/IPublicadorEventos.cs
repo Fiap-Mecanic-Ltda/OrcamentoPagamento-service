@@ -1,8 +1,9 @@
 namespace OrcamentoPagamento.Domain.Interfaces.Messaging
 {
     /// <summary>
-    /// Publica eventos de domínio para fora do serviço. A implementação de produção fala
-    /// com o SNS; em testes e na execução sem AWS, um publicador que só registra em log.
+    /// Eventos internos de domínio (orcamento.calculado, pagamento.aprovado...), registrados
+    /// em log estruturado para auditoria. O que outros serviços precisam saber vai pela Saga
+    /// (<see cref="IPublicadorSaga"/>).
     /// </summary>
     public interface IPublicadorEventos
     {

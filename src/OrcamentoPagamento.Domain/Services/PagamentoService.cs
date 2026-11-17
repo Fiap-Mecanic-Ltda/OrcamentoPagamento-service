@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Logging;
+using MechanicLtda.Contratos;
 using OrcamentoPagamento.Domain.Commands;
 using OrcamentoPagamento.Domain.Entities;
 using OrcamentoPagamento.Domain.Enums;
@@ -7,6 +8,7 @@ using OrcamentoPagamento.Domain.Interfaces.Gateways;
 using OrcamentoPagamento.Domain.Interfaces.Messaging;
 using OrcamentoPagamento.Domain.Interfaces.Repositories;
 using OrcamentoPagamento.Domain.Interfaces.Services;
+using OrcamentoPagamento.Domain.Messaging;
 using OrcamentoPagamento.Domain.Services.Base;
 
 namespace OrcamentoPagamento.Domain.Services
@@ -23,6 +25,7 @@ namespace OrcamentoPagamento.Domain.Services
         private readonly IOrcamentoRepository _orcamentoRepository;
         private readonly IGatewayPagamento _gateway;
         private readonly IPublicadorEventos _publicador;
+        private readonly IPublicadorSaga _publicadorSaga;
         private readonly ILogger<PagamentoService> _logger;
 
         public PagamentoService(
@@ -31,9 +34,11 @@ namespace OrcamentoPagamento.Domain.Services
             IPagamentoRepository pagamentoRepository,
             IOrcamentoRepository orcamentoRepository,
             IGatewayPagamento gateway,
-            IPublicadorEventos publicador)
+            IPublicadorEventos publicador,
+            IPublicadorSaga publicadorSaga)
             : base(notificadorService)
         {
+            _publicadorSaga = publicadorSaga;
             _logger = logger;
             _pagamentoRepository = pagamentoRepository;
             _orcamentoRepository = orcamentoRepository;
@@ -65,6 +70,11 @@ namespace OrcamentoPagamento.Domain.Services
                 var aprovado = await _pagamentoRepository.ObterAprovadoPorOrcamentoIdAsync(orcamento.Id);
                 if (aprovado is not null)
                     throw new PagamentoJaAprovadoException(orcamento.Id, aprovado.Id);
+
+                // Só orçamento em aberto (OS em Aguardando Aprovação) aceita pagamento:
+                // recusado ou cancelado pela Saga não se paga mais.
+                if (!orcamento.EstaEmAberto())
+                    throw new OrcamentoIndisponivelException(orcamento.Id, orcamento.Status, "pagamento");
 
                 if (orcamento.ValorTotalGeral <= 0)
                     throw new ArgumentException($"O orcamento {orcamento.Id} tem valor zerado e nao pode ser cobrado.");
@@ -117,6 +127,7 @@ namespace OrcamentoPagamento.Domain.Services
 
                 await PublicarAsync(EventoPagamentoCriado, persistido, cancellationToken);
                 await PublicarEventoDeStatusAsync(persistido, cancellationToken);
+                await NotificarSagaAsync(persistido, orcamento, cancellationToken);
 
                 _logger.LogInformation(
                     "Pagamento {PagamentoId} criado para o orcamento {OrcamentoId}: {Status} ({StatusDetalhe}), valor {Valor}.",
@@ -127,6 +138,7 @@ namespace OrcamentoPagamento.Domain.Services
             catch (Exception ex) when (ex is not KeyNotFoundException
                                        and not ArgumentException
                                        and not PagamentoJaAprovadoException
+                                       and not OrcamentoIndisponivelException
                                        and not GatewayPagamentoException)
             {
                 Notificar(ex, "Ocorreu um erro no metodo PagamentoService:CriarAsync", _logger);
@@ -278,7 +290,61 @@ namespace OrcamentoPagamento.Domain.Services
 
             await PublicarEventoDeStatusAsync(pagamento, cancellationToken);
 
+            var orcamento = await _orcamentoRepository.ObterPorIdAsync(pagamento.OrcamentoId.ToString());
+            await NotificarSagaAsync(pagamento, orcamento, cancellationToken);
+
             return pagamento;
+        }
+
+        /// <summary>
+        /// Avisa a Saga da OS do desfecho do pagamento (docs/contratos-eventos.md). Aprovado vira
+        /// PagamentoConfirmado, que vale como a aprovação do orçamento e leva a OS para Execução;
+        /// recusado vira PagamentoFalhou, e a OS continua em Aguardando Aprovação para nova
+        /// tentativa. Orçamento fora da Saga (rota manual) não publica nada.
+        ///
+        /// Best-effort como os demais eventos: o pagamento já está gravado. Uma falha aqui fica
+        /// no log com o pagamento e a OS, para reenvio manual.
+        /// </summary>
+        private async Task NotificarSagaAsync(Pagamento pagamento, Orcamento? orcamento, CancellationToken cancellationToken)
+        {
+            if (orcamento is null || !orcamento.ParticipaDaSaga())
+                return;
+
+            try
+            {
+                switch (pagamento.Status)
+                {
+                    case StatusPagamento.Aprovado:
+                        if (orcamento.EstaEmAberto())
+                        {
+                            orcamento.Status = StatusOrcamento.Pago;
+                            await _orcamentoRepository.AtualizarAsync(orcamento);
+                        }
+
+                        await _publicadorSaga.PublicarAsync(MensagensSaga.DoOrcamento(orcamento, new PagamentoConfirmado
+                        {
+                            PagamentoId = pagamento.Id,
+                            Valor = pagamento.Valor,
+                            MeioPagamento = pagamento.MetodoPagamento
+                        }), cancellationToken);
+                        break;
+
+                    case StatusPagamento.Recusado:
+                        await _publicadorSaga.PublicarAsync(MensagensSaga.DoOrcamento(orcamento, new PagamentoFalhou
+                        {
+                            Motivo = string.IsNullOrWhiteSpace(pagamento.StatusDetalhe)
+                                ? "Pagamento recusado pelo provedor."
+                                : pagamento.StatusDetalhe
+                        }), cancellationToken);
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                Notificar(ex,
+                    $"Falha ao avisar a Saga do pagamento {pagamento.Id} ({pagamento.Status}) da OS {pagamento.OrdemServicoId}",
+                    _logger);
+            }
         }
 
         private static void ValidarComando(CriarPagamentoCommand command)

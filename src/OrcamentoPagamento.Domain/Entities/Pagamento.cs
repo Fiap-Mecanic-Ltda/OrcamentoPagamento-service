@@ -166,6 +166,27 @@ namespace OrcamentoPagamento.Domain.Entities
         }
 
         /// <summary>
+        /// Registra a devolução pedida pela compensação da Saga quando o provedor aceitou o
+        /// pedido mas a consulta ainda não mostra o status final. Só vale para pagamento
+        /// aprovado ou em disputa.
+        /// </summary>
+        public bool RegistrarEstorno(string? detalhe)
+        {
+            if (!PodeTransicionarPara(StatusPagamento.Estornado))
+                return false;
+
+            Status = StatusPagamento.Estornado;
+            StatusDetalhe = detalhe;
+            AtualizadoEm = DateTime.UtcNow;
+            return true;
+        }
+
+        /// <summary>Já não há valor cobrado a devolver: recusado, cancelado, devolvido ou estornado.</summary>
+        public bool SemValorADevolver()
+            => Status is StatusPagamento.Recusado or StatusPagamento.Cancelado
+                      or StatusPagamento.Devolvido or StatusPagamento.Estornado;
+
+        /// <summary>
         /// Cancelamento originado aqui. Só vale para pagamento em aberto: o que já foi
         /// aprovado não se cancela, se estorna — e isso é decisão humana.
         /// </summary>

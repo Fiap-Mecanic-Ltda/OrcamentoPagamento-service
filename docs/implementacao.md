@@ -4,6 +4,12 @@
 - **Origem:** [MechanicLtda](https://github.com/Fiap-Mecanic-Ltda/MechanicLtda) — monólito
   modular .NET 9, de onde o contexto de orçamento foi espelhado
 
+> **Atualização (2026-11-17, [ADR-004](adr/ADR-004-saga-rabbitmq.md)):** a entrada por
+> SNS/SQS (`SqsConsumidorItensAlterados`, `SnsPublicadorEventos`, LocalStack) foi removida. O
+> serviço agora participa da Saga da OS pelo RabbitMQ (`SagaOrcamentoService`, consumidores em
+> `Infrastructure/Messaging/ConsumidoresSaga.cs`). As linhas abaixo sobre SNS/SQS ficam como
+> histórico.
+
 Este documento registra o inventário do que existe neste repositório e a procedência de
 cada parte: o que foi portado do monólito como estava, o que foi adaptado na portagem, e o
 que nasceu aqui porque microsserviço exige.

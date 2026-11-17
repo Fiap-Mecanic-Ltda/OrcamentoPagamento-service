@@ -7,7 +7,7 @@
   "variable": [
     {
       "key": "orcamentoBaseUrl",
-      "value": "http://localhost:8081",
+      "value": "http://localhost:8083",
       "description": "URL do microsservico. Em producao, a base do API Gateway."
     },
     {

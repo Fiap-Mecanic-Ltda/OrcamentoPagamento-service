@@ -13,5 +13,11 @@ namespace OrcamentoPagamento.Domain.Enums
 
         /// <summary>Cancelamento pedido por um operador.</summary>
         public const string CanceladoPeloOperador = "CanceladoPeloOperador";
+
+        /// <summary>Compensação da Saga da OS (CancelarOrcamento ou EstornarPagamento).</summary>
+        public const string CompensacaoDaSaga = "CompensacaoDaSaga";
+
+        /// <summary>O cliente recusou o orçamento.</summary>
+        public const string OrcamentoRecusado = "OrcamentoRecusado";
     }
 }

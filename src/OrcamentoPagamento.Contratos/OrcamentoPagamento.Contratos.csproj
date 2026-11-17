@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Mensagens da Saga da OS (docs/contratos-eventos.md). Copia identica do
+    OsService.Contratos do ordemservico-service: o namespace MechanicLtda.Contratos
+    define o nome dos exchanges no RabbitMQ (MechanicLtda.Contratos:<Mensagem>), entao
+    nao pode mudar. Sem dependencias: o Domain referencia este projeto.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>

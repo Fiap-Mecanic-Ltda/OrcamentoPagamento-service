@@ -12,4 +12,12 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.15" />
   </ItemGroup>
 
+  <ItemGroup>
+    <ProjectReference Include="..\OrcamentoPagamento.Contratos\OrcamentoPagamento.Contratos.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="OrcamentoPagamento.Domain.Tests" />
+  </ItemGroup>
+
 </Project>

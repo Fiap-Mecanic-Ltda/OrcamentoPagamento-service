@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using OrcamentoPagamento.Domain.Entities;
+using OrcamentoPagamento.Domain.Enums;
 using OrcamentoPagamento.Infrastructure.FluentAPI.ConfiguracaoTabelas.Base;
 
 namespace OrcamentoPagamento.Infrastructure.FluentAPI.ConfiguracaoTabelas
@@ -30,6 +31,15 @@ namespace OrcamentoPagamento.Infrastructure.FluentAPI.ConfiguracaoTabelas
 
                 entity.Property(e => e.DataGeracao)
                       .IsRequired();
+
+                // Situação na Saga da OS. Orçamentos anteriores à Saga ficam Aberto (1).
+                entity.Property(e => e.Status)
+                      .IsRequired()
+                      .HasDefaultValue(StatusOrcamento.Aberto)
+                      .HasSentinel((StatusOrcamento)0);
+
+                entity.Property(e => e.MotivoStatus)
+                      .HasMaxLength(500);
 
                 // Sem FK para a OS: ela vive no banco do serviço de Oficina. O índice
                 // único garante a regra "uma OS, um orçamento" dentro deste serviço.

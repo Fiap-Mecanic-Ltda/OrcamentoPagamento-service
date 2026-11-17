@@ -25,6 +25,7 @@ WORKDIR /src
 # Copia só os .csproj primeiro para aproveitar o cache do restore.
 COPY ["src/OrcamentoPagamento.API/OrcamentoPagamento.API.csproj", "src/OrcamentoPagamento.API/"]
 COPY ["src/OrcamentoPagamento.Application/OrcamentoPagamento.Application.csproj", "src/OrcamentoPagamento.Application/"]
+COPY ["src/OrcamentoPagamento.Contratos/OrcamentoPagamento.Contratos.csproj", "src/OrcamentoPagamento.Contratos/"]
 COPY ["src/OrcamentoPagamento.Domain/OrcamentoPagamento.Domain.csproj", "src/OrcamentoPagamento.Domain/"]
 COPY ["src/OrcamentoPagamento.Infrastructure/OrcamentoPagamento.Infrastructure.csproj", "src/OrcamentoPagamento.Infrastructure/"]
 
